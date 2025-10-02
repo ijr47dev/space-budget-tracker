@@ -1,5 +1,7 @@
 # 🚀 Space Budget Tracker - NES Edition
 
+**[🌐 Live Demo](https://space-budget-tracker.vercel.app/)**
+
 A retro NES/space-themed budget calculator built with React. Track income, expenses by category, and manage your budget with a nostalgic 8-bit aesthetic.
 
 ![Space Budget Tracker](screenshot.png)
