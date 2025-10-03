@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Rocket, Trash2, Plus, DollarSign, TrendingDown, TrendingUp, Edit2, Save, X, Download, Volume2, VolumeX, PieChart as PieChartIcon, ChevronLeft, ChevronRight, Calendar, Repeat, Bell, BellOff, AlertTriangle } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { AuthProvider, useAuth } from './AuthContext';
+import Login from './Login';
+import { saveMonthlyBudgets, loadMonthlyBudgets, migrateLocalStorageToFirestore } from './firestoreService';
 
 /**
  * Renders the animated starfield background
@@ -31,7 +34,10 @@ const StarField = () => {
  * Main Budget Calculator Component
  * A retro NES/space themed budget tracking application with localStorage persistence
  */
-export default function NESBudgetCalculator() {
+function MainApp() {
+
+  const { user, logout } = useAuth();  // ← ADD THIS LINE
+
   // State Management
   const [monthlyBudgets, setMonthlyBudgets] = useState({}); // Stores budget data by month (key: "YYYY-MM")
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -176,79 +182,51 @@ export default function NESBudgetCalculator() {
 
 
   /**
-   * useEffect Hook: Load data from localStorage when component first mounts
+   * useEffect Hook: Load data from Firestore when component first mounts
    * This runs once when the app starts, restoring any saved data
-   * Also handles migration from old single-month format to new monthly format
    */
   useEffect(() => {
-    // Check if there's new monthly format data
-    const savedMonthlyBudgets = localStorage.getItem('monthlyBudgets');
-    
-    if (savedMonthlyBudgets) {
-      // Load monthly budgets
-      try {
-        const parsed = JSON.parse(savedMonthlyBudgets);
-        setMonthlyBudgets(parsed);
-      } catch (error) {
-        console.error('Error loading monthly budgets:', error);
-      }
-    } else {
-      // Check for old format data and migrate it
-      const savedIncome = localStorage.getItem('budgetIncome');
-      const savedExpenses = localStorage.getItem('budgetExpenses');
+    const loadUserData = async () => {
+      if (!user || !user.uid) return;
       
-      if (savedIncome || savedExpenses) {
-        // Safely parse expenses
-        let parsedExpenses = [];
-        if (savedExpenses) {
-          try {
-            parsedExpenses = JSON.parse(savedExpenses);
-            // Ensure each expense has isRecurring property
-            parsedExpenses = parsedExpenses.map(exp => ({ 
-              ...exp, 
-              isRecurring: exp.isRecurring || false 
-            }));
-          } catch (error) {
-            console.error('Error parsing expenses:', error);
-            parsedExpenses = [];
-          }
+      try {
+        // First, try to migrate any localStorage data to Firestore
+        await migrateLocalStorageToFirestore(user.uid);
+        
+        // Then load data from Firestore
+        const data = await loadMonthlyBudgets(user.uid);
+        
+        if (data && Object.keys(data).length > 0) {
+          setMonthlyBudgets(data);
         }
         
-        // Get current month from state
-        const now = new Date();
-        const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        
-        // Migrate old data to current month
-        const migratedData = {
-          [monthKey]: {
-            income: savedIncome ? parseFloat(savedIncome) : 0,
-            incomeRecurring: false,
-            expenses: parsedExpenses,
-            categoryLimits: {}
-          }
-        };
-        setMonthlyBudgets(migratedData);
-        
-        // Clean up old localStorage keys
-        localStorage.removeItem('budgetIncome');
-        localStorage.removeItem('budgetExpenses');
+        // Mark that we've finished loading
+        setIsLoaded(true);
+      } catch (error) {
+        console.error('Error loading user data:', error);
+        setIsLoaded(true);
       }
-    }
-
-    // Mark that we've finished loading
-    setIsLoaded(true);
-  }, []); // Empty array - only run once on mount
+    };
+    
+    loadUserData();
+  }, [user]); // Run when user changes
 
   /**
-   * useEffect Hook: Save monthly budgets to localStorage whenever they change
-   * The dependency array [monthlyBudgets] means this runs every time monthlyBudgets updates
+   * useEffect Hook: Save monthly budgets to Firestore whenever they change
    */
   useEffect(() => {
-    // Only save after initial load to avoid overwriting with default value
-    if (isLoaded) {
-      localStorage.setItem('monthlyBudgets', JSON.stringify(monthlyBudgets));
-    }
-  }, [monthlyBudgets, isLoaded]); // Runs when monthlyBudgets or isLoaded changes
+    const saveUserData = async () => {
+      if (isLoaded && user && user.uid && Object.keys(monthlyBudgets).length > 0) {
+        try {
+          await saveMonthlyBudgets(user.uid, monthlyBudgets);
+        } catch (error) {
+          console.error('Error saving to Firestore:', error);
+        }
+      }
+    };
+    
+    saveUserData();
+  }, [monthlyBudgets, isLoaded, user]); // Save when data changes
 
   /**
    * useEffect Hook: Auto-populate recurring items when changing months
@@ -734,21 +712,23 @@ export default function NESBudgetCalculator() {
     })).slice(-6); // Last 6 months
   };
 
-  /**
-   * Clears all data from localStorage and resets the app
-   * Useful for starting fresh or testing
-   */
-  const handleResetData = () => {
+    const handleResetData = async () => {
     if (window.confirm('🚀 Are you sure you want to reset all data? This cannot be undone!')) {
-      localStorage.removeItem('budgetIncome');
-      localStorage.removeItem('budgetExpenses');
-      localStorage.clear();
-
-      window.location.reload(); // Reload to reset state  
-      setIncome(0);
-      setExpenses([]);
-      setMonthlyBudgets({});
-      
+      try {
+        // Clear Firestore
+        if (user && user.uid) {
+          await saveMonthlyBudgets(user.uid, {});
+        }
+        
+        // Clear localStorage
+        localStorage.clear();
+        
+        // Reload page
+        window.location.reload();
+      } catch (error) {
+        console.error('Error resetting data:', error);
+        alert('Error resetting data. Please try again.');
+      }
     }
   };
 
@@ -788,6 +768,20 @@ export default function NESBudgetCalculator() {
       <div className="max-w-4xl mx-auto relative z-10">
         {/* Control Buttons - Top Right Corner */}
         <div className="fixed top-4 right-4 flex gap-2 z-50">
+          {/* User Info & Logout */}
+          <div className="bg-gray-800 border-2 border-white px-3 py-2 flex items-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]">
+            <span className="text-xs font-bold">
+              👤 {user?.email || user?.displayName || 'Player'}
+            </span>
+            <button
+              onClick={logout}
+              className="bg-red-600 hover:bg-red-700 border-2 border-red-800 px-3 py-1 text-xs font-bold transition-all hover:scale-110"
+              title="Logout"
+            >
+              LOGOUT
+            </button>
+          </div>
+          
           {/* Notification Toggle Button */}
           <button
             onClick={toggleNotifications}
@@ -1407,5 +1401,26 @@ export default function NESBudgetCalculator() {
       </div>
     </div>
     </>
+  );
+}
+// New wrapper component that handles auth
+function AppWithAuth() {
+  const { user } = useAuth();
+
+  // If not logged in, show login screen
+  if (!user) {
+    return <Login />;
+  }
+
+  // If logged in, show main app
+  return <MainApp />;
+}
+
+// Main export with AuthProvider
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppWithAuth />
+    </AuthProvider>
   );
 }
