@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Ba
 import { AuthProvider, useAuth } from './AuthContext';
 import Login from './Login';
 import { saveMonthlyBudgets, loadMonthlyBudgets, migrateLocalStorageToFirestore } from './firestoreService';
+import Insights from './Insights';
 
 /**
  * Renders the animated starfield background
@@ -858,6 +859,15 @@ function MainApp() {
           <button
             onClick={() => {
               playClickSound();
+              setScreen('insights');
+            }}
+            className={`flex-1 ${screen === 'insights' ? 'bg-blue-600 border-blue-800' : 'bg-gray-700 border-gray-900'} border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95`}
+          >
+            📊 INSIGHTS
+          </button>
+          <button
+            onClick={() => {
+              playClickSound();
               setScreen('settings');
             }}
             className={`flex-1 ${screen === 'settings' ? 'bg-blue-600 border-blue-800' : 'bg-gray-700 border-gray-900'} border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95`}
@@ -1237,6 +1247,18 @@ function MainApp() {
             )}
           </div>
         )}</div>
+        )}
+
+        {/* Insights Screen Content */}
+        {screen === 'insights' && (
+          <div className="animate-[fadeIn_0.3s_ease-in]">
+            <Insights 
+              monthlyBudgets={monthlyBudgets}
+              currentMonth={currentMonth}
+              formatCurrency={formatCurrency}
+              categories={categories}
+            />
+          </div>
         )}
 
         {/* Settings Screen Content */}
