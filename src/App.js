@@ -5,6 +5,8 @@ import { AuthProvider, useAuth } from './AuthContext';
 import Login from './Login';
 import { saveMonthlyBudgets, loadMonthlyBudgets, migrateLocalStorageToFirestore } from './firestoreService';
 import Insights from './Insights';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import ThemeSelector from './components/ThemeSelector';
 
 /**
  * Renders the animated starfield background
@@ -33,34 +35,32 @@ const StarField = () => {
 
 /**
  * Main Budget Calculator Component
- * A retro NES/space themed budget tracking application with localStorage persistence
+ * A retro NES/space themed budget tracking application with Firestore persistence
  */
 function MainApp() {
-
-  const { user, logout } = useAuth();  // ← ADD THIS LINE
+  const { user, logout } = useAuth();
+  const { theme } = useTheme(); // Theme hook for dynamic colors
 
   // State Management
-  const [monthlyBudgets, setMonthlyBudgets] = useState({}); // Stores budget data by month (key: "YYYY-MM")
+  const [monthlyBudgets, setMonthlyBudgets] = useState({});
   const [currentMonth, setCurrentMonth] = useState(() => {
-    // Initialize to current month in format "YYYY-MM"
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [newExpense, setNewExpense] = useState({ // Form state for adding new expenses
+  const [newExpense, setNewExpense] = useState({
     name: '',
     amount: '',
     category: 'food',
     isRecurring: false
   });
-  const [screen, setScreen] = useState('main'); // Controls which screen is displayed
-  const [isLoaded, setIsLoaded] = useState(false); // Tracks if data has been loaded from localStorage
-  const [editingExpenseId, setEditingExpenseId] = useState(null); // Tracks which expense is being edited
-  const [editingExpenseData, setEditingExpenseData] = useState(null); // Holds the temporary edit data
-  const [soundEnabled, setSoundEnabled] = useState(true); // Controls whether sound effects are enabled
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false); // Controls whether browser notifications are enabled
-  const [alertsShown, setAlertsShown] = useState({}); // Tracks which category alerts have been shown this session (key: "month-category")
+  const [screen, setScreen] = useState('main');
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [editingExpenseData, setEditingExpenseData] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [alertsShown, setAlertsShown] = useState({});
   
-  // Ref to track which months have been auto-populated (to prevent duplicates)
   const populatedMonthsRef = useRef({});
 
   /**
@@ -88,40 +88,18 @@ function MainApp() {
 
   /**
    * Gets the budget data for the current month
-   * @returns {object} Object with income, incomeRecurring, expenses, and categoryLimits for current month
    */
   const getCurrentMonthData = () => {
     return monthlyBudgets[currentMonth] || { income: 0, incomeRecurring: false, expenses: [], categoryLimits: {} };
   };
 
-  /**
-   * Gets income for the current month
-   * @returns {number} Income value
-   */
   const getIncome = () => getCurrentMonthData().income;
-
-  /**
-   * Gets whether income is recurring for the current month
-   * @returns {boolean} True if income is recurring
-   */
   const getIncomeRecurring = () => getCurrentMonthData().incomeRecurring || false;
-
-  /**
-   * Gets expenses for the current month
-   * @returns {array} Array of expense objects
-   */
   const getExpenses = () => getCurrentMonthData().expenses || [];
-
-  /**
-   * Gets category limits for the current month
-   * @returns {object} Object with category IDs as keys and limit amounts as values
-   */
   const getCategoryLimits = () => getCurrentMonthData().categoryLimits || {};
 
   /**
    * Sets a budget limit for a specific category
-   * @param {string} categoryId - The category ID
-   * @param {number} limit - The limit amount (0 to remove limit)
    */
   const setCategoryLimit = (categoryId, limit) => {
     const currentLimits = getCategoryLimits();
@@ -144,8 +122,6 @@ function MainApp() {
 
   /**
    * Updates income for the current month
-   * @param {number} value - New income value
-   * @param {boolean} isRecurring - Optional: whether income is recurring
    */
   const setIncome = (value, isRecurring) => {
     setMonthlyBudgets(prev => ({
@@ -169,7 +145,6 @@ function MainApp() {
 
   /**
    * Updates expenses for the current month
-   * @param {array} newExpenses - New expenses array
    */
   const setExpenses = (newExpenses) => {
     setMonthlyBudgets(prev => ({
@@ -181,27 +156,21 @@ function MainApp() {
     }));
   };
 
-
   /**
-   * useEffect Hook: Load data from Firestore when component first mounts
-   * This runs once when the app starts, restoring any saved data
+   * Load data from Firestore when component first mounts
    */
   useEffect(() => {
     const loadUserData = async () => {
       if (!user || !user.uid) return;
       
       try {
-        // First, try to migrate any localStorage data to Firestore
         await migrateLocalStorageToFirestore(user.uid);
-        
-        // Then load data from Firestore
         const data = await loadMonthlyBudgets(user.uid);
         
         if (data && Object.keys(data).length > 0) {
           setMonthlyBudgets(data);
         }
         
-        // Mark that we've finished loading
         setIsLoaded(true);
       } catch (error) {
         console.error('Error loading user data:', error);
@@ -210,10 +179,10 @@ function MainApp() {
     };
     
     loadUserData();
-  }, [user]); // Run when user changes
+  }, [user]);
 
   /**
-   * useEffect Hook: Save monthly budgets to Firestore whenever they change
+   * Save monthly budgets to Firestore whenever they change
    */
   useEffect(() => {
     const saveUserData = async () => {
@@ -227,26 +196,21 @@ function MainApp() {
     };
     
     saveUserData();
-  }, [monthlyBudgets, isLoaded, user]); // Save when data changes
+  }, [monthlyBudgets, isLoaded, user]);
 
   /**
-   * useEffect Hook: Auto-populate recurring items when changing months
-   * This runs whenever currentMonth changes and checks if we need to populate
+   * Auto-populate recurring items when changing months
    */
   useEffect(() => {
-    // Don't run if not loaded yet or if we've already populated this month
     if (!isLoaded || !currentMonth || populatedMonthsRef.current[currentMonth]) {
       return;
     }
     
-    // Small delay to ensure state is settled
     const timer = setTimeout(() => {
-      // Find the most recent previous month with data
       const sortedMonths = Object.keys(monthlyBudgets).sort().reverse();
       const previousMonth = sortedMonths.find(m => m < currentMonth);
       
       if (!previousMonth) {
-        // Mark as checked even if no previous month
         populatedMonthsRef.current[currentMonth] = true;
         return;
       }
@@ -257,19 +221,15 @@ function MainApp() {
         return;
       }
       
-      // Check if this month already exists and has data
       const currentData = monthlyBudgets[currentMonth];
-      
       const hasExpenses = currentData && currentData.expenses && currentData.expenses.length > 0;
       const hasIncome = currentData && currentData.income > 0;
       
-      // Only populate if the month is empty
       if (hasExpenses || hasIncome) {
         populatedMonthsRef.current[currentMonth] = true;
         return;
       }
       
-      // Build new month data
       const newMonthData = {
         income: 0,
         incomeRecurring: false,
@@ -279,20 +239,18 @@ function MainApp() {
       
       let hasRecurringData = false;
       
-      // Copy recurring income
       if (prevData.incomeRecurring && prevData.income > 0) {
         newMonthData.income = prevData.income;
         newMonthData.incomeRecurring = true;
         hasRecurringData = true;
       }
       
-      // Copy recurring expenses
       if (prevData.expenses && Array.isArray(prevData.expenses) && prevData.expenses.length > 0) {
         const recurringExpenses = prevData.expenses
           .filter(exp => exp && exp.isRecurring)
           .map((exp, index) => ({
             ...exp,
-            id: Date.now() + index // Generate new unique ID
+            id: Date.now() + index
           }));
         
         if (recurringExpenses.length > 0) {
@@ -301,31 +259,27 @@ function MainApp() {
         }
       }
       
-      // Copy category limits
       if (prevData.categoryLimits && typeof prevData.categoryLimits === 'object') {
         newMonthData.categoryLimits = { ...prevData.categoryLimits };
       }
       
-      // Only update if we have recurring data to copy
       if (hasRecurringData) {
         setMonthlyBudgets(prev => ({
           ...prev,
           [currentMonth]: newMonthData
         }));
         
-        // Play success sound
         if (soundEnabled) {
           setTimeout(() => playSuccessSound(), 100);
         }
       }
       
-      // Mark this month as populated
       populatedMonthsRef.current[currentMonth] = true;
     }, 100);
     
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentMonth, isLoaded]); // Only depend on currentMonth and isLoaded to avoid infinite loop
+  }, [currentMonth, isLoaded]);
 
   // Available expense categories with associated colors
   const categories = [
@@ -342,12 +296,7 @@ function MainApp() {
   ];
 
   /**
-   * Sound Effect Generator using Web Audio API
-   * Creates retro 8-bit style sounds without external files
-   */
-  
-  /**
-   * Plays a button click sound (short beep)
+   * Sound Effect Generators using Web Audio API
    */
   const playClickSound = () => {
     if (!soundEnabled) return;
@@ -358,8 +307,8 @@ function MainApp() {
     oscillator.connect(gainNode);
     gainNode.connect(audioContext.destination);
     
-    oscillator.frequency.value = 800; // High pitch beep
-    oscillator.type = 'square'; // Retro square wave
+    oscillator.frequency.value = 800;
+    oscillator.type = 'square';
     
     gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
@@ -368,9 +317,6 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.1);
   };
 
-  /**
-   * Plays a success sound (ascending notes)
-   */
   const playSuccessSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -392,9 +338,6 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.3);
   };
 
-  /**
-   * Plays a warning sound (descending notes)
-   */
   const playWarningSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -415,9 +358,6 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.3);
   };
 
-  /**
-   * Plays a delete sound (low descending tone)
-   */
   const playDeleteSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -439,43 +379,31 @@ function MainApp() {
   };
 
   /**
-   * Calculates the total of all expenses
-   * @returns {number} Sum of all expense amounts
+   * Calculation functions
    */
   const calculateTotalExpenses = () => {
     const expenses = getExpenses();
     return expenses.reduce((total, expense) => total + parseFloat(expense.amount), 0);
   };
 
-  /**
-   * Calculates remaining budget after expenses
-   * @returns {number} Income minus total expenses
-   */
   const calculateRemaining = () => {
     return getIncome() - calculateTotalExpenses();
   };
 
-  /**
-   * Calculates expenses by category for visualization
-   * @returns {Array} Array of objects with category totals and limit information
-   */
   const calculateCategoryTotals = () => {
     const totals = {};
     const expenses = getExpenses();
     const income = getIncome();
     const limits = getCategoryLimits();
     
-    // Initialize all categories to 0
     categories.forEach(cat => {
       totals[cat.id] = 0;
     });
     
-    // Sum up expenses by category
     expenses.forEach(expense => {
       totals[expense.category] += parseFloat(expense.amount);
     });
     
-    // Convert to array format with category details
     return categories.map(cat => {
       const total = totals[cat.id];
       const limit = limits[cat.id] || 0;
@@ -490,11 +418,11 @@ function MainApp() {
         isOverLimit: limit > 0 && total > limit,
         isNearLimit: limit > 0 && total >= limit * 0.8 && total <= limit
       };
-    }).filter(cat => cat.total > 0); // Only show categories with expenses
+    }).filter(cat => cat.total > 0);
   };
 
   /**
-   * Checks if any category limits have been exceeded and shows notifications
+   * Checks if any category limits have been exceeded
    */
   const checkCategoryLimits = () => {
     if (!notificationsEnabled) return;
@@ -505,15 +433,12 @@ function MainApp() {
     categoryTotals.forEach(cat => {
       const notificationKey = `${alertKey}-${cat.id}`;
       
-      // Only alert if we haven't already alerted for this category this month
       if (cat.isOverLimit && !alertsShown[notificationKey]) {
-        // Show browser notification
         new Notification('⚠️ Budget Alert!', {
           body: `You've exceeded your ${cat.name} budget! Spent: ${formatCurrency(cat.total)} / Limit: ${formatCurrency(cat.limit)}`,
           icon: '🚀'
         });
         
-        // Mark as shown
         setAlertsShown(prev => ({
           ...prev,
           [notificationKey]: true
@@ -525,8 +450,7 @@ function MainApp() {
   };
 
   /**
-   * Adds a new expense to the expenses array
-   * Validates that name and amount are provided
+   * Expense management functions
    */
   const handleAddExpense = () => {
     if (newExpense.name && newExpense.amount) {
@@ -536,7 +460,7 @@ function MainApp() {
       setExpenses([
         ...expenses,
         {
-          id: Date.now(), // Simple unique ID using timestamp
+          id: Date.now(),
           name: newExpense.name,
           amount: parseFloat(newExpense.amount),
           category: newExpense.category,
@@ -544,36 +468,24 @@ function MainApp() {
         }
       ]);
       
-      // Play sound after adding
       const newRemaining = getIncome() - (calculateTotalExpenses() + parseFloat(newExpense.amount));
       if (newRemaining < 0 && !wasOverBudget) {
-        playWarningSound(); // Play warning if just went over budget
+        playWarningSound();
       } else {
-        playSuccessSound(); // Play success sound
+        playSuccessSound();
       }
       
-      // Reset form after adding
       setNewExpense({ name: '', amount: '', category: 'food', isRecurring: false });
-      
-      // Check category limits after a short delay (to allow state to update)
       setTimeout(() => checkCategoryLimits(), 100);
     }
   };
 
-  /**
-   * Removes an expense from the expenses array
-   * @param {number} id - The unique ID of the expense to delete
-   */
   const handleDeleteExpense = (id) => {
     const expenses = getExpenses();
     setExpenses(expenses.filter(expense => expense.id !== id));
-    playDeleteSound(); // Play delete sound
+    playDeleteSound();
   };
 
-  /**
-   * Toggles the recurring status of an expense
-   * @param {number} id - The unique ID of the expense to toggle
-   */
   const toggleExpenseRecurring = (id) => {
     const expenses = getExpenses();
     setExpenses(expenses.map(expense => 
@@ -584,19 +496,11 @@ function MainApp() {
     playClickSound();
   };
 
-  /**
-   * Starts editing an expense
-   * @param {object} expense - The expense object to edit
-   */
   const handleStartEdit = (expense) => {
     setEditingExpenseId(expense.id);
     setEditingExpenseData({ ...expense });
   };
 
-  /**
-   * Saves the edited expense
-   * Updates the expense in the expenses array with the new values
-   */
   const handleSaveEdit = () => {
     if (editingExpenseData.name && editingExpenseData.amount) {
       const expenses = getExpenses();
@@ -605,16 +509,12 @@ function MainApp() {
           ? { ...editingExpenseData, amount: parseFloat(editingExpenseData.amount) }
           : expense
       ));
-      // Clear editing state
       setEditingExpenseId(null);
       setEditingExpenseData(null);
-      playSuccessSound(); // Play success sound when saved
+      playSuccessSound();
     }
   };
 
-  /**
-   * Cancels editing and discards changes
-   */
   const handleCancelEdit = () => {
     setEditingExpenseId(null);
     setEditingExpenseData(null);
@@ -622,44 +522,35 @@ function MainApp() {
 
   /**
    * Exports budget data to CSV file
-   * Creates a downloadable CSV with income and all expenses
    */
   const handleExportCSV = () => {
     const income = getIncome();
     const expenses = getExpenses();
     
-    // Create CSV header
     let csvContent = `Budget Report - ${formatMonthYear(currentMonth)}\n\n`;
     csvContent += "Category,Name,Amount\n";
     
-    // Add income row
     csvContent += `Income,Monthly Income,${income}\n`;
     
-    // Add all expenses
     expenses.forEach(expense => {
       const category = categories.find(c => c.id === expense.category);
-      // Escape commas in names by wrapping in quotes
       const name = expense.name.includes(',') ? `"${expense.name}"` : expense.name;
       csvContent += `${category.name},${name},${expense.amount}\n`;
     });
     
-    // Add summary rows
     csvContent += `\nSummary\n`;
     csvContent += `Total Income,,${income}\n`;
     csvContent += `Total Expenses,,${calculateTotalExpenses()}\n`;
     csvContent += `Remaining,,${calculateRemaining()}\n`;
     
-    // Create blob and download link
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     
-    // Set download filename with current date
     const date = new Date().toISOString().split('T')[0];
     link.setAttribute('href', url);
     link.setAttribute('download', `space-budget-${currentMonth}-${date}.csv`);
     
-    // Trigger download
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -667,32 +558,24 @@ function MainApp() {
   };
 
   /**
-   * Navigates to the previous month
+   * Month navigation
    */
   const handlePreviousMonth = () => {
     const [year, month] = currentMonth.split('-').map(Number);
-    const prevDate = new Date(year, month - 2); // month - 2 because months are 0-indexed
+    const prevDate = new Date(year, month - 2);
     const newMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
     setCurrentMonth(newMonth);
     playClickSound();
   };
 
-  /**
-   * Navigates to the next month
-   */
   const handleNextMonth = () => {
     const [year, month] = currentMonth.split('-').map(Number);
-    const nextDate = new Date(year, month); // month is already next month (0-indexed)
+    const nextDate = new Date(year, month);
     const newMonth = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
     setCurrentMonth(newMonth);
     playClickSound();
   };
 
-  /**
-   * Formats a month string (YYYY-MM) into readable format
-   * @param {string} monthStr - Month string in format "YYYY-MM"
-   * @returns {string} Formatted month like "October 2025"
-   */
   const formatMonthYear = (monthStr) => {
     const [year, month] = monthStr.split('-');
     const date = new Date(year, month - 1);
@@ -701,30 +584,24 @@ function MainApp() {
 
   /**
    * Gets historical data for month comparison chart
-   * @returns {array} Array of objects with month and spending data
    */
   const getMonthlyHistory = () => {
     const months = Object.keys(monthlyBudgets).sort();
     return months.map(month => ({
-      month: formatMonthYear(month).split(' ')[0], // Just month name
+      month: formatMonthYear(month).split(' ')[0],
       income: monthlyBudgets[month].income,
       expenses: monthlyBudgets[month].expenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0),
       remaining: monthlyBudgets[month].income - monthlyBudgets[month].expenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0)
-    })).slice(-6); // Last 6 months
+    })).slice(-6);
   };
 
-    const handleResetData = async () => {
+  const handleResetData = async () => {
     if (window.confirm('🚀 Are you sure you want to reset all data? This cannot be undone!')) {
       try {
-        // Clear Firestore
         if (user && user.uid) {
           await saveMonthlyBudgets(user.uid, {});
         }
-        
-        // Clear localStorage
         localStorage.clear();
-        
-        // Reload page
         window.location.reload();
       } catch (error) {
         console.error('Error resetting data:', error);
@@ -733,11 +610,6 @@ function MainApp() {
     }
   };
 
-  /**
-   * Formats a number as currency
-   * @param {number} amount - The amount to format
-   * @returns {string} Formatted currency string
-   */
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -747,8 +619,7 @@ function MainApp() {
 
   // Main Render
   return (
-    <>
-      {/* Custom CSS Animations */}
+    <div>
       <style>{`
         @keyframes fadeIn {
           from {
@@ -762,687 +633,944 @@ function MainApp() {
         }
       `}</style>
       
-      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-purple-900 to-black text-white p-4 font-mono">
-      <StarField />
-      
-      {/* Main Container */}
-      <div className="max-w-4xl mx-auto relative z-10">
-        {/* Control Buttons - Top Right Corner */}
-        <div className="fixed top-4 right-4 flex gap-2 z-50">
-          {/* User Info & Logout */}
-          <div className="bg-gray-800 border-2 border-white px-3 py-2 flex items-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]">
-            <span className="text-xs font-bold">
-              👤 {user?.email || user?.displayName || 'Player'}
-            </span>
-            <button
-              onClick={logout}
-              className="bg-red-600 hover:bg-red-700 border-2 border-red-800 px-3 py-1 text-xs font-bold transition-all hover:scale-110"
-              title="Logout"
-            >
-              LOGOUT
-            </button>
-          </div>
-          
-          {/* Notification Toggle Button */}
-          <button
-            onClick={toggleNotifications}
-            className="bg-gray-800 hover:bg-gray-700 border-2 border-white p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
-            title={notificationsEnabled ? "Disable notifications" : "Enable notifications"}
-          >
-            {notificationsEnabled ? <Bell size={20} /> : <BellOff size={20} />}
-          </button>
-          
-          {/* Mute Button */}
-          <button
-            onClick={() => {
-              setSoundEnabled(!soundEnabled);
-              if (soundEnabled) {
-                playClickSound(); // Play one last sound before muting
-              }
-            }}
-            className="bg-gray-800 hover:bg-gray-700 border-2 border-white p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
-            title={soundEnabled ? "Mute sounds" : "Enable sounds"}
-          >
-            {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
-          </button>
-        </div>
+      <div 
+        className="min-h-screen p-4 font-mono transition-all duration-300"
+        style={{
+          background: `linear-gradient(to bottom, ${theme.colors.primary}, ${theme.colors.secondary})`,
+          color: theme.colors.text
+        }}
+      >
+        <StarField />
         
-        {/* Header */}
-        <div className="text-center mb-8 mt-8">
-          <div className="inline-block bg-black border-4 border-white p-6 shadow-[8px_8px_0px_0px_rgba(255,255,255,0.3)]">
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <Rocket size={32} className="animate-bounce" />
-              <h1 className="text-4xl font-bold">SPACE BUDGET</h1>
-              <Rocket size={32} className="animate-bounce" style={{ animationDelay: '0.2s' }} />
-            </div>
-            <p className="text-sm text-gray-400">NES EDITION v1.0</p>
-          </div>
-        </div>
-
-        {/* Month Navigation */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mb-6">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={handlePreviousMonth}
-              className="bg-blue-600 hover:bg-blue-700 border-2 border-blue-800 p-3 transition-all hover:scale-110 active:scale-95"
-              title="Previous month"
+        <div className="max-w-4xl mx-auto relative z-10">
+          {/* Control Buttons - Top Right */}
+          <div className="fixed top-4 right-4 flex gap-2 z-50">
+            <div 
+              className="border-2 px-3 py-2 flex items-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
+              style={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border
+              }}
             >
-              <ChevronLeft size={24} />
-            </button>
-            
-            <div className="flex items-center gap-3">
-              <Calendar size={24} />
-              <span className="text-2xl font-bold">{formatMonthYear(currentMonth)}</span>
+              <span className="text-xs font-bold" style={{ color: theme.colors.text }}>
+                👤 {user?.email || user?.displayName || 'Player'}
+              </span>
+              <button
+                onClick={logout}
+                className="border-2 px-3 py-1 text-xs font-bold transition-all hover:scale-110"
+                style={{
+                  backgroundColor: theme.colors.error,
+                  borderColor: theme.colors.border,
+                  color: theme.colors.text
+                }}
+              >
+                LOGOUT
+              </button>
             </div>
             
             <button
-              onClick={handleNextMonth}
-              className="bg-blue-600 hover:bg-blue-700 border-2 border-blue-800 p-3 transition-all hover:scale-110 active:scale-95"
-              title="Next month"
+              onClick={toggleNotifications}
+              className="border-2 p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
+              style={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+              title={notificationsEnabled ? "Disable notifications" : "Enable notifications"}
             >
-              <ChevronRight size={24} />
-            </button>
-          </div>
-        </div>
-
-        {/* Navigation Buttons */}
-        <div className="flex gap-4 mb-6">
-          <button
-            onClick={() => {
-              playClickSound();
-              setScreen('main');
-            }}
-            className={`flex-1 ${screen === 'main' ? 'bg-blue-600 border-blue-800' : 'bg-gray-700 border-gray-900'} border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95`}
-          >
-            🎮 DASHBOARD
-          </button>
-          <button
-            onClick={() => {
-              playClickSound();
-              setScreen('insights');
-            }}
-            className={`flex-1 ${screen === 'insights' ? 'bg-blue-600 border-blue-800' : 'bg-gray-700 border-gray-900'} border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95`}
-          >
-            📊 INSIGHTS
-          </button>
-          <button
-            onClick={() => {
-              playClickSound();
-              setScreen('settings');
-            }}
-            className={`flex-1 ${screen === 'settings' ? 'bg-blue-600 border-blue-800' : 'bg-gray-700 border-gray-900'} border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95`}
-          >
-            ⚙️ MANAGE
-          </button>
-        </div>
-
-        {/* Dashboard Screen Content */}
-        {screen === 'main' && (
-          <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">{/* Budget Overview Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Income Display */}
-          <div className="bg-green-600 border-4 border-green-800 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp size={20} />
-              <span className="text-sm font-bold">INCOME</span>
-              {getIncomeRecurring() && <Repeat size={16} className="animate-pulse" title="Recurring" />}
-            </div>
-            <div className="text-2xl font-bold">{formatCurrency(getIncome())}</div>
-          </div>
-
-          {/* Total Expenses Display */}
-          <div className="bg-red-600 border-4 border-red-800 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingDown size={20} />
-              <span className="text-sm font-bold">EXPENSES</span>
-            </div>
-            <div className="text-2xl font-bold">{formatCurrency(calculateTotalExpenses())}</div>
-          </div>
-
-          {/* Remaining Budget Display */}
-          <div className={`${calculateRemaining() < 0 ? 'bg-red-600 border-red-800 animate-pulse' : 'bg-blue-600 border-blue-800'} border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105`}>
-            <div className="flex items-center gap-2 mb-2">
-              <DollarSign size={20} />
-              <span className="text-sm font-bold">REMAINING</span>
-            </div>
-            <div className="text-2xl font-bold">{formatCurrency(calculateRemaining())}</div>
-            {calculateRemaining() < 0 && (
-              <div className="text-xs mt-1 animate-pulse">⚠️ OVER BUDGET!</div>
-            )}
-          </div>
-        </div>
-
-        {/* Budget Alerts - Show warnings for over-limit categories */}
-        {(() => {
-          const overLimitCategories = calculateCategoryTotals().filter(cat => cat.isOverLimit);
-          const nearLimitCategories = calculateCategoryTotals().filter(cat => cat.isNearLimit);
-          
-          if (overLimitCategories.length > 0 || nearLimitCategories.length > 0) {
-            return (
-              <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                <div className="flex items-center gap-2 mb-3">
-                  <AlertTriangle size={20} className="text-yellow-400 animate-pulse" />
-                  <h3 className="text-lg font-bold">⚠️ BUDGET ALERTS</h3>
-                </div>
-                
-                {overLimitCategories.length > 0 && (
-                  <div className="mb-3">
-                    <p className="text-red-400 font-bold text-sm mb-2">🚨 OVER BUDGET:</p>
-                    {overLimitCategories.map(cat => (
-                      <div key={cat.id} className="text-sm mb-1 bg-red-900 bg-opacity-30 p-2 border-l-4 border-red-500">
-                        {cat.name}: {formatCurrency(cat.total)} / {formatCurrency(cat.limit)} 
-                        <span className="text-red-300 ml-2">({Math.round(cat.percentOfLimit)}%)</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {nearLimitCategories.length > 0 && (
-                  <div>
-                    <p className="text-yellow-400 font-bold text-sm mb-2">⚡ WARNING (80%+):</p>
-                    {nearLimitCategories.map(cat => (
-                      <div key={cat.id} className="text-sm mb-1 bg-yellow-900 bg-opacity-20 p-2 border-l-4 border-yellow-500">
-                        {cat.name}: {formatCurrency(cat.total)} / {formatCurrency(cat.limit)}
-                        <span className="text-yellow-300 ml-2">({Math.round(cat.percentOfLimit)}%)</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          }
-          return null;
-        })()}
-
-        {/* Monthly Comparison Chart - NEW! */}
-        {Object.keys(monthlyBudgets).length > 1 && (
-          <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <h3 className="text-lg font-bold mb-4">📈 MONTHLY TRENDS</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={getMonthlyHistory()}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                <XAxis 
-                  dataKey="month" 
-                  stroke="#fff" 
-                  style={{ fontFamily: 'monospace', fontSize: '12px' }}
-                />
-                <YAxis 
-                  stroke="#fff" 
-                  style={{ fontFamily: 'monospace', fontSize: '12px' }}
-                  tickFormatter={(value) => `${value}`}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1f2937', 
-                    border: '2px solid #000',
-                    borderRadius: '0',
-                    color: '#fff',
-                    fontFamily: 'monospace'
-                  }}
-                  formatter={(value) => formatCurrency(value)}
-                />
-                <Legend 
-                  wrapperStyle={{ 
-                    fontFamily: 'monospace',
-                    fontSize: '12px'
-                  }}
-                />
-                <Bar dataKey="income" fill="#10b981" stroke="#000" strokeWidth={2} name="Income" />
-                <Bar dataKey="expenses" fill="#ef4444" stroke="#000" strokeWidth={2} name="Expenses" />
-                <Bar dataKey="remaining" fill="#3b82f6" stroke="#000" strokeWidth={2} name="Remaining" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Pie Chart Visualization - NEW! */}
-        {getExpenses().length > 0 && (
-          <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <div className="flex items-center gap-2 mb-4">
-              <PieChartIcon size={24} />
-              <h3 className="text-lg font-bold">🥧 SPENDING BREAKDOWN</h3>
-            </div>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={calculateCategoryTotals()}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percentage }) => `${name} ${percentage.toFixed(0)}%`}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="total"
-                  animationDuration={800}
-                  animationBegin={0}
-                >
-                  {calculateCategoryTotals().map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} stroke="#000" strokeWidth={2} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1f2937', 
-                    border: '2px solid #000',
-                    borderRadius: '0',
-                    color: '#fff',
-                    fontFamily: 'monospace'
-                  }}
-                  formatter={(value) => formatCurrency(value)}
-                />
-                <Legend 
-                  wrapperStyle={{ 
-                    fontFamily: 'monospace',
-                    fontSize: '12px'
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Category Breakdown - Original CSS Bars */}
-        {getExpenses().length > 0 && (
-          <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <h3 className="text-lg font-bold mb-4">📊 CATEGORY DETAILS</h3>
-            <div className="space-y-3">
-              {calculateCategoryTotals().map(cat => {
-                // Determine bar color based on limit status
-                let barColor = cat.color;
-                if (cat.limit > 0) {
-                  if (cat.isOverLimit) {
-                    barColor = '#ef4444'; // Red when over limit
-                  } else if (cat.isNearLimit) {
-                    barColor = '#fbbf24'; // Yellow when near limit (80%+)
-                  }
-                }
-                
-                return (
-                  <div key={cat.id}>
-                    <div className="flex justify-between mb-1 text-sm items-center">
-                      <div className="flex items-center gap-2">
-                        <span>{cat.name}</span>
-                        {cat.isOverLimit && <AlertTriangle size={14} className="text-red-400 animate-pulse" />}
-                        {cat.isNearLimit && <AlertTriangle size={14} className="text-yellow-400" />}
-                      </div>
-                      <div className="text-right">
-                        <span className="font-bold">{formatCurrency(cat.total)}</span>
-                        {cat.limit > 0 && (
-                          <span className="text-xs text-gray-400 ml-2">
-                            / {formatCurrency(cat.limit)} ({Math.round(cat.percentOfLimit)}%)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="w-full bg-gray-900 h-6 border-2 border-black relative">
-                      <div
-                        className="h-full transition-all duration-500"
-                        style={{
-                          width: `${Math.min(cat.percentage, 100)}%`,
-                          backgroundColor: barColor
-                        }}
-                      />
-                      {/* Show limit marker if set */}
-                      {cat.limit > 0 && (
-                        <div 
-                          className="absolute top-0 bottom-0 w-1 bg-white"
-                          style={{ 
-                            left: `${Math.min((cat.limit / getIncome()) * 100, 100)}%`,
-                            boxShadow: '0 0 4px rgba(255,255,255,0.8)'
-                          }}
-                          title={`Limit: ${formatCurrency(cat.limit)}`}
-                        />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Recent Expenses List */}
-        {getExpenses().length > 0 && (
-          <div className="bg-gray-800 border-4 border-gray-900 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <h3 className="text-lg font-bold mb-2">📝 RECENT EXPENSES</h3>
-            <p className="text-xs text-gray-400 mb-4">💡 Tip: Mark expenses as recurring (🔄) to auto-copy them to new months!</p>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {getExpenses().map(expense => {
-                const category = categories.find(c => c.id === expense.category);
-                const isEditing = editingExpenseId === expense.id;
-                
-                return (
-                  <div
-                    key={expense.id}
-                    className="bg-gray-900 border-2 border-gray-700 p-3 hover:border-white transition-colors"
-                  >
-                    {isEditing ? (
-                      // Edit Mode - Show edit form
-                      <div className="space-y-3">
-                        <input
-                          type="text"
-                          value={editingExpenseData.name}
-                          onChange={(e) => setEditingExpenseData({ ...editingExpenseData, name: e.target.value })}
-                          placeholder="Expense name"
-                          className="w-full bg-gray-800 border-2 border-gray-600 p-2 text-white font-bold focus:border-white outline-none"
-                        />
-                        <input
-                          type="number"
-                          value={editingExpenseData.amount}
-                          onChange={(e) => setEditingExpenseData({ ...editingExpenseData, amount: e.target.value })}
-                          placeholder="Amount"
-                          className="w-full bg-gray-800 border-2 border-gray-600 p-2 text-white font-bold focus:border-white outline-none"
-                        />
-                        <select
-                          value={editingExpenseData.category}
-                          onChange={(e) => setEditingExpenseData({ ...editingExpenseData, category: e.target.value })}
-                          className="w-full bg-gray-800 border-2 border-gray-600 p-2 text-white font-bold focus:border-white outline-none"
-                        >
-                          {categories.map(cat => (
-                            <option key={cat.id} value={cat.id}>{cat.name}</option>
-                          ))}
-                        </select>
-                        
-                        {/* Recurring Toggle in Edit Mode */}
-                        <button
-                          type="button"
-                          onClick={() => setEditingExpenseData({ ...editingExpenseData, isRecurring: !editingExpenseData.isRecurring })}
-                          className={`w-full ${editingExpenseData.isRecurring ? 'bg-green-600 border-green-800' : 'bg-gray-600 border-gray-800'} hover:opacity-90 border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95`}
-                        >
-                          {editingExpenseData.isRecurring ? <Repeat size={16} /> : <X size={16} />}
-                          {editingExpenseData.isRecurring ? 'RECURRING ✓' : 'ONE-TIME'}
-                        </button>
-                        
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              handleSaveEdit();
-                            }}
-                            className="flex-1 bg-green-600 hover:bg-green-700 border-2 border-green-800 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
-                          >
-                            <Save size={16} />
-                            SAVE
-                          </button>
-                          <button
-                            onClick={() => {
-                              playClickSound();
-                              handleCancelEdit();
-                            }}
-                            className="flex-1 bg-gray-600 hover:bg-gray-700 border-2 border-gray-800 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
-                          >
-                            <X size={16} />
-                            CANCEL
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      // Normal Mode - Show expense details
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="w-3 h-3 border-2 border-black"
-                            style={{ backgroundColor: category.color }}
-                          />
-                          <div>
-                            <div className="font-bold flex items-center gap-2">
-                              {expense.name}
-                              {expense.isRecurring && (
-                                <Repeat size={14} className="text-green-400" title="Recurring expense" />
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-400">{category.name}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold">{formatCurrency(expense.amount)}</span>
-                          <button
-                            onClick={() => {
-                              playClickSound();
-                              toggleExpenseRecurring(expense.id);
-                            }}
-                            className={`${expense.isRecurring ? 'bg-green-600 border-green-800' : 'bg-gray-600 border-gray-800'} hover:opacity-90 border-2 p-2 transition-all hover:scale-110 active:scale-95`}
-                            title={expense.isRecurring ? "Remove recurring" : "Mark as recurring"}
-                          >
-                            {expense.isRecurring ? <Repeat size={16} /> : <X size={16} />}
-                          </button>
-                          <button
-                            onClick={() => {
-                              playClickSound();
-                              handleStartEdit(expense);
-                            }}
-                            className="bg-blue-600 hover:bg-blue-700 border-2 border-blue-800 p-2 transition-all hover:scale-110 active:scale-95"
-                            title="Edit expense"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleDeleteExpense(expense.id);
-                            }}
-                            className="bg-red-600 hover:bg-red-700 border-2 border-red-800 p-2 transition-all hover:scale-110 active:scale-95"
-                            title="Delete expense"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {getExpenses().length === 0 && (
-          <div className="text-center py-12 bg-gray-800 border-4 border-gray-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <Rocket size={48} className="mx-auto mb-4 animate-bounce" />
-            <p className="text-xl font-bold mb-2">NO EXPENSES YET!</p>
-            <p className="text-gray-400 mb-2">Add your income and start tracking expenses for {formatMonthYear(currentMonth)}</p>
-            {Object.keys(monthlyBudgets).length > 0 && (
-              <p className="text-xs text-green-400 mt-4">
-                💡 Recurring items from previous months will auto-copy when you add new data!
-              </p>
-            )}
-          </div>
-        )}</div>
-        )}
-
-        {/* Insights Screen Content */}
-        {screen === 'insights' && (
-          <div className="animate-[fadeIn_0.3s_ease-in]">
-            <Insights 
-              monthlyBudgets={monthlyBudgets}
-              currentMonth={currentMonth}
-              formatCurrency={formatCurrency}
-              categories={categories}
-            />
-          </div>
-        )}
-
-        {/* Settings Screen Content */}
-        {screen === 'settings' && (
-          <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">{/* Income Input Section */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h3 className="text-xl font-bold mb-4">💰 SET INCOME</h3>
-          <div className="space-y-3">
-            <input
-              type="number"
-              value={getIncome()}
-              onChange={(e) => setIncome(parseFloat(e.target.value) || 0)}
-              placeholder="Enter your income"
-              className="w-full bg-gray-900 border-4 border-gray-700 p-3 text-white font-bold focus:border-white outline-none"
-            />
-            <button
-              onClick={toggleIncomeRecurring}
-              className={`w-full ${getIncomeRecurring() ? 'bg-green-600 border-green-800' : 'bg-gray-600 border-gray-800'} hover:opacity-90 border-4 p-3 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95`}
-            >
-              {getIncomeRecurring() ? <Repeat size={20} /> : <X size={20} />}
-              {getIncomeRecurring() ? 'RECURRING INCOME ✓' : 'MARK AS RECURRING'}
-            </button>
-            {getIncomeRecurring() && (
-              <p className="text-xs text-green-400">💚 This income will auto-copy to new months</p>
-            )}
-          </div>
-        </div>
-
-        {/* Add Expense Section */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h3 className="text-xl font-bold mb-4">➕ ADD EXPENSE</h3>
-          <div className="space-y-4">
-            {/* Expense Name Input */}
-            <input
-              type="text"
-              value={newExpense.name}
-              onChange={(e) => setNewExpense({ ...newExpense, name: e.target.value })}
-              placeholder="Expense name"
-              className="w-full bg-gray-900 border-4 border-gray-700 p-3 text-white font-bold focus:border-white outline-none"
-            />
-            
-            {/* Expense Amount Input */}
-            <input
-              type="number"
-              value={newExpense.amount}
-              onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-              placeholder="Amount"
-              className="w-full bg-gray-900 border-4 border-gray-700 p-3 text-white font-bold focus:border-white outline-none"
-            />
-            
-            {/* Category Selection */}
-            <select
-              value={newExpense.category}
-              onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
-              className="w-full bg-gray-900 border-4 border-gray-700 p-3 text-white font-bold focus:border-white outline-none"
-            >
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-            
-            {/* Recurring Toggle */}
-            <button
-              type="button"
-              onClick={() => setNewExpense({ ...newExpense, isRecurring: !newExpense.isRecurring })}
-              className={`w-full ${newExpense.isRecurring ? 'bg-green-600 border-green-800' : 'bg-gray-600 border-gray-800'} hover:opacity-90 border-4 p-3 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95`}
-            >
-              {newExpense.isRecurring ? <Repeat size={20} /> : <X size={20} />}
-              {newExpense.isRecurring ? 'RECURRING ✓' : 'ONE-TIME EXPENSE'}
+              {notificationsEnabled ? <Bell size={20} /> : <BellOff size={20} />}
             </button>
             
-            {/* Add Button */}
             <button
               onClick={() => {
-                handleAddExpense();
+                setSoundEnabled(!soundEnabled);
+                if (soundEnabled) {
+                  playClickSound();
+                }
               }}
-              className="w-full bg-green-600 hover:bg-green-700 border-4 border-green-800 p-3 font-bold flex items-center justify-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              className="border-2 p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
+              style={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+              title={soundEnabled ? "Mute sounds" : "Enable sounds"}
             >
-              <Plus size={20} />
-              ADD EXPENSE
+              {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
             </button>
           </div>
-        </div>
-
-        {/* Category Budget Limits - NEW! */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle size={24} />
-            <h3 className="text-xl font-bold">⚠️ SET SPENDING LIMITS</h3>
+          
+          {/* Header */}
+          <div className="text-center mb-8 mt-8">
+            <div 
+              className="inline-block border-4 p-6 shadow-[8px_8px_0px_0px_rgba(255,255,255,0.3)]"
+              style={{
+                backgroundColor: theme.colors.primary,
+                borderColor: theme.colors.border
+              }}
+            >
+              <div className="flex items-center justify-center gap-3 mb-2">
+                <Rocket size={32} className="animate-bounce" />
+                <h1 className="text-4xl font-bold" style={{ color: theme.colors.text }}>SPACE BUDGET</h1>
+                <Rocket size={32} className="animate-bounce" style={{ animationDelay: '0.2s' }} />
+              </div>
+              <p className="text-sm" style={{ color: theme.colors.textSecondary }}>NES EDITION v1.0</p>
+            </div>
           </div>
-          <p className="text-gray-400 text-sm mb-4">
-            Set budget limits for each category. You'll get alerts at 80% and 100%.
-          </p>
-          <div className="space-y-3">
-            {categories.map(cat => {
-              const currentLimit = getCategoryLimits()[cat.id] || 0;
-              return (
-                <div key={cat.id} className="flex items-center gap-3">
-                  <div
-                    className="w-4 h-4 border-2 border-black flex-shrink-0"
-                    style={{ backgroundColor: cat.color }}
-                  />
-                  <span className="text-sm flex-1">{cat.name}</span>
+
+          {/* Month Navigation */}
+          <div 
+            className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mb-6"
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <button
+                onClick={handlePreviousMonth}
+                className="border-2 p-3 transition-all hover:scale-110 active:scale-95"
+                style={{
+                  backgroundColor: theme.colors.accent,
+                  borderColor: theme.colors.border,
+                  color: theme.colors.text
+                }}
+                title="Previous month"
+              >
+                <ChevronLeft size={24} />
+              </button>
+              
+              <div className="flex items-center gap-3" style={{ color: theme.colors.text }}>
+                <Calendar size={24} />
+                <span className="text-2xl font-bold">{formatMonthYear(currentMonth)}</span>
+              </div>
+              
+              <button
+                onClick={handleNextMonth}
+                className="border-2 p-3 transition-all hover:scale-110 active:scale-95"
+                style={{
+                  backgroundColor: theme.colors.accent,
+                  borderColor: theme.colors.border,
+                  color: theme.colors.text
+                }}
+                title="Next month"
+              >
+                <ChevronRight size={24} />
+              </button>
+            </div>
+          </div>
+
+          {/* Navigation Buttons */}
+          <div className="flex gap-4 mb-6">
+            <button
+              onClick={() => {
+                playClickSound();
+                setScreen('main');
+              }}
+              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              style={{
+                backgroundColor: screen === 'main' ? theme.colors.accent : theme.colors.secondary,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+            >
+              🎮 DASHBOARD
+            </button>
+            <button
+              onClick={() => {
+                playClickSound();
+                setScreen('insights');
+              }}
+              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              style={{
+                backgroundColor: screen === 'insights' ? theme.colors.accent : theme.colors.secondary,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+            >
+              📊 INSIGHTS
+            </button>
+            <button
+              onClick={() => {
+                playClickSound();
+                setScreen('settings');
+              }}
+              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              style={{
+                backgroundColor: screen === 'settings' ? theme.colors.accent : theme.colors.secondary,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+            >
+              ⚙️ MANAGE
+            </button>
+          </div>
+
+          {/* Dashboard Screen */}
+          {screen === 'main' && (
+            <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">
+              {/* Budget Overview Section */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105"
+                  style={{
+                    backgroundColor: theme.colors.success,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp size={20} />
+                    <span className="text-sm font-bold">INCOME</span>
+                    {getIncomeRecurring() && <Repeat size={16} className="animate-pulse" title="Recurring" />}
+                  </div>
+                  <div className="text-2xl font-bold">{formatCurrency(getIncome())}</div>
+                </div>
+
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105"
+                  style={{
+                    backgroundColor: theme.colors.error,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingDown size={20} />
+                    <span className="text-sm font-bold">EXPENSES</span>
+                  </div>
+                  <div className="text-2xl font-bold">{formatCurrency(calculateTotalExpenses())}</div>
+                </div>
+
+                <div 
+                  className={`border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 ${calculateRemaining() < 0 ? 'animate-pulse' : ''}`}
+                  style={{
+                    backgroundColor: calculateRemaining() < 0 ? theme.colors.error : theme.colors.accent,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <DollarSign size={20} />
+                    <span className="text-sm font-bold">REMAINING</span>
+                  </div>
+                  <div className="text-2xl font-bold">{formatCurrency(calculateRemaining())}</div>
+                  {calculateRemaining() < 0 && (
+                    <div className="text-xs mt-1 animate-pulse">⚠️ OVER BUDGET!</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Budget Alerts */}
+              {(() => {
+                const overLimitCategories = calculateCategoryTotals().filter(cat => cat.isOverLimit);
+                const nearLimitCategories = calculateCategoryTotals().filter(cat => cat.isNearLimit);
+                
+                if (overLimitCategories.length > 0 || nearLimitCategories.length > 0) {
+                  return (
+                    <div 
+                      className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                      style={{
+                        backgroundColor: theme.colors.surface,
+                        borderColor: theme.colors.border
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-3">
+                        <AlertTriangle size={20} style={{ color: theme.colors.warning }} className="animate-pulse" />
+                        <h3 className="text-lg font-bold" style={{ color: theme.colors.text }}>⚠️ BUDGET ALERTS</h3>
+                      </div>
+                      
+                      {overLimitCategories.length > 0 && (
+                        <div className="mb-3">
+                          <p className="font-bold text-sm mb-2" style={{ color: theme.colors.error }}>🚨 OVER BUDGET:</p>
+                          {overLimitCategories.map(cat => (
+                            <div 
+                              key={cat.id} 
+                              className="text-sm mb-1 p-2 border-l-4"
+                              style={{
+                                backgroundColor: `${theme.colors.error}20`,
+                                borderColor: theme.colors.error,
+                                color: theme.colors.text
+                              }}
+                            >
+                              {cat.name}: {formatCurrency(cat.total)} / {formatCurrency(cat.limit)} 
+                              <span style={{ color: theme.colors.error }} className="ml-2">({Math.round(cat.percentOfLimit)}%)</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {nearLimitCategories.length > 0 && (
+                        <div>
+                          <p className="font-bold text-sm mb-2" style={{ color: theme.colors.warning }}>⚡ WARNING (80%+):</p>
+                          {nearLimitCategories.map(cat => (
+                            <div 
+                              key={cat.id} 
+                              className="text-sm mb-1 p-2 border-l-4"
+                              style={{
+                                backgroundColor: `${theme.colors.warning}20`,
+                                borderColor: theme.colors.warning,
+                                color: theme.colors.text
+                              }}
+                            >
+                              {cat.name}: {formatCurrency(cat.total)} / {formatCurrency(cat.limit)}
+                              <span style={{ color: theme.colors.warning }} className="ml-2">({Math.round(cat.percentOfLimit)}%)</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {/* Monthly Comparison Chart */}
+              {Object.keys(monthlyBudgets).length > 1 && (
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <h3 className="text-lg font-bold mb-4" style={{ color: theme.colors.text }}>📈 MONTHLY TRENDS</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={getMonthlyHistory()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme.colors.border} />
+                      <XAxis 
+                        dataKey="month" 
+                        stroke={theme.colors.text}
+                        style={{ fontFamily: 'monospace', fontSize: '12px' }}
+                      />
+                      <YAxis 
+                        stroke={theme.colors.text}
+                        style={{ fontFamily: 'monospace', fontSize: '12px' }}
+                        tickFormatter={(value) => `${value}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: theme.colors.surface,
+                          border: `2px solid ${theme.colors.border}`,
+                          borderRadius: '0',
+                          color: theme.colors.text,
+                          fontFamily: 'monospace'
+                        }}
+                        formatter={(value) => formatCurrency(value)}
+                      />
+                      <Legend 
+                        wrapperStyle={{ 
+                          fontFamily: 'monospace',
+                          fontSize: '12px',
+                          color: theme.colors.text
+                        }}
+                      />
+                      <Bar dataKey="income" fill={theme.colors.success} stroke="#000" strokeWidth={2} name="Income" />
+                      <Bar dataKey="expenses" fill={theme.colors.error} stroke="#000" strokeWidth={2} name="Expenses" />
+                      <Bar dataKey="remaining" fill={theme.colors.accent} stroke="#000" strokeWidth={2} name="Remaining" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Pie Chart Visualization */}
+              {getExpenses().length > 0 && (
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <PieChartIcon size={24} style={{ color: theme.colors.text }} />
+                    <h3 className="text-lg font-bold" style={{ color: theme.colors.text }}>🥧 SPENDING BREAKDOWN</h3>
+                  </div>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={calculateCategoryTotals()}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percentage }) => `${name} ${percentage.toFixed(0)}%`}
+                        outerRadius={100}
+                        fill="#8884d8"
+                        dataKey="total"
+                        animationDuration={800}
+                        animationBegin={0}
+                      >
+                        {calculateCategoryTotals().map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} stroke="#000" strokeWidth={2} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: theme.colors.surface,
+                          border: `2px solid ${theme.colors.border}`,
+                          borderRadius: '0',
+                          color: theme.colors.text,
+                          fontFamily: 'monospace'
+                        }}
+                        formatter={(value) => formatCurrency(value)}
+                      />
+                      <Legend 
+                        wrapperStyle={{ 
+                          fontFamily: 'monospace',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Category Breakdown */}
+              {getExpenses().length > 0 && (
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <h3 className="text-lg font-bold mb-4" style={{ color: theme.colors.text }}>📊 CATEGORY DETAILS</h3>
+                  <div className="space-y-3">
+                    {calculateCategoryTotals().map(cat => {
+                      let barColor = cat.color;
+                      if (cat.limit > 0) {
+                        if (cat.isOverLimit) {
+                          barColor = theme.colors.error;
+                        } else if (cat.isNearLimit) {
+                          barColor = theme.colors.warning;
+                        }
+                      }
+                      
+                      return (
+                        <div key={cat.id}>
+                          <div className="flex justify-between mb-1 text-sm items-center">
+                            <div className="flex items-center gap-2">
+                              <span style={{ color: theme.colors.text }}>{cat.name}</span>
+                              {cat.isOverLimit && <AlertTriangle size={14} style={{ color: theme.colors.error }} className="animate-pulse" />}
+                              {cat.isNearLimit && <AlertTriangle size={14} style={{ color: theme.colors.warning }} />}
+                            </div>
+                            <div className="text-right">
+                              <span className="font-bold" style={{ color: theme.colors.text }}>{formatCurrency(cat.total)}</span>
+                              {cat.limit > 0 && (
+                                <span className="text-xs ml-2" style={{ color: theme.colors.textSecondary }}>
+                                  / {formatCurrency(cat.limit)} ({Math.round(cat.percentOfLimit)}%)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div 
+                            className="w-full h-6 border-2 relative"
+                            style={{
+                              backgroundColor: theme.colors.secondary,
+                              borderColor: theme.colors.border
+                            }}
+                          >
+                            <div
+                              className="h-full transition-all duration-500"
+                              style={{
+                                width: `${Math.min(cat.percentage, 100)}%`,
+                                backgroundColor: barColor
+                              }}
+                            />
+                            {cat.limit > 0 && (
+                              <div 
+                                className="absolute top-0 bottom-0 w-1"
+                                style={{ 
+                                  left: `${Math.min((cat.limit / getIncome()) * 100, 100)}%`,
+                                  backgroundColor: theme.colors.text,
+                                  boxShadow: `0 0 4px ${theme.colors.text}`
+                                }}
+                                title={`Limit: ${formatCurrency(cat.limit)}`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Expenses List */}
+              {getExpenses().length > 0 && (
+                <div 
+                  className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <h3 className="text-lg font-bold mb-2" style={{ color: theme.colors.text }}>📝 RECENT EXPENSES</h3>
+                  <p className="text-xs mb-4" style={{ color: theme.colors.textSecondary }}>💡 Tip: Mark expenses as recurring (🔄) to auto-copy them to new months!</p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {getExpenses().map(expense => {
+                      const category = categories.find(c => c.id === expense.category);
+                      const isEditing = editingExpenseId === expense.id;
+                      
+                      return (
+                        <div
+                          key={expense.id}
+                          className="border-2 p-3 transition-colors"
+                          style={{
+                            backgroundColor: theme.colors.secondary,
+                            borderColor: isEditing ? theme.colors.accent : theme.colors.border
+                          }}
+                        >
+                          {isEditing ? (
+                            <div className="space-y-3">
+                              <input
+                                type="text"
+                                value={editingExpenseData.name}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, name: e.target.value })}
+                                placeholder="Expense name"
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              />
+                              <input
+                                type="number"
+                                value={editingExpenseData.amount}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, amount: e.target.value })}
+                                placeholder="Amount"
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              />
+                              <select
+                                value={editingExpenseData.category}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, category: e.target.value })}
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              >
+                                {categories.map(cat => (
+                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                ))}
+                              </select>
+                              
+                              <button
+                                type="button"
+                                onClick={() => setEditingExpenseData({ ...editingExpenseData, isRecurring: !editingExpenseData.isRecurring })}
+                                className="w-full border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                style={{
+                                  backgroundColor: editingExpenseData.isRecurring ? theme.colors.success : theme.colors.secondary,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              >
+                                {editingExpenseData.isRecurring ? <Repeat size={16} /> : <X size={16} />}
+                                {editingExpenseData.isRecurring ? 'RECURRING ✓' : 'ONE-TIME'}
+                              </button>
+                              
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleSaveEdit}
+                                  className="flex-1 border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.success,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <Save size={16} />
+                                  SAVE
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    playClickSound();
+                                    handleCancelEdit();
+                                  }}
+                                  className="flex-1 border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.secondary,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <X size={16} />
+                                  CANCEL
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-3 h-3 border-2 border-black"
+                                  style={{ backgroundColor: category.color }}
+                                />
+                                <div>
+                                  <div className="font-bold flex items-center gap-2" style={{ color: theme.colors.text }}>
+                                    {expense.name}
+                                    {expense.isRecurring && (
+                                      <Repeat size={14} style={{ color: theme.colors.success }} title="Recurring expense" />
+                                    )}
+                                  </div>
+                                  <div className="text-xs" style={{ color: theme.colors.textSecondary }}>{category.name}</div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold" style={{ color: theme.colors.text }}>{formatCurrency(expense.amount)}</span>
+                                <button
+                                  onClick={() => {
+                                    playClickSound();
+                                    toggleExpenseRecurring(expense.id);
+                                  }}
+                                  className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                  style={{
+                                    backgroundColor: expense.isRecurring ? theme.colors.success : theme.colors.secondary,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                  title={expense.isRecurring ? "Remove recurring" : "Mark as recurring"}
+                                >
+                                  {expense.isRecurring ? <Repeat size={16} /> : <X size={16} />}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    playClickSound();
+                                    handleStartEdit(expense);
+                                  }}
+                                  className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.accent,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                  title="Edit expense"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteExpense(expense.id)}
+                                  className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.error,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                  title="Delete expense"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty State */}
+              {getExpenses().length === 0 && (
+                <div 
+                  className="text-center py-12 border-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <Rocket size={48} className="mx-auto mb-4 animate-bounce" style={{ color: theme.colors.text }} />
+                  <p className="text-xl font-bold mb-2" style={{ color: theme.colors.text }}>NO EXPENSES YET!</p>
+                  <p className="mb-2" style={{ color: theme.colors.textSecondary }}>Add your income and start tracking expenses for {formatMonthYear(currentMonth)}</p>
+                  {Object.keys(monthlyBudgets).length > 0 && (
+                    <p className="text-xs mt-4" style={{ color: theme.colors.success }}>
+                      💡 Recurring items from previous months will auto-copy when you add new data!
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Insights Screen */}
+          {screen === 'insights' && (
+            <div className="animate-[fadeIn_0.3s_ease-in]">
+              <Insights 
+                monthlyBudgets={monthlyBudgets}
+                currentMonth={currentMonth}
+                formatCurrency={formatCurrency}
+                categories={categories}
+              />
+            </div>
+          )}
+
+          {/* Settings Screen */}
+          {screen === 'settings' && (
+            <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">
+              <ThemeSelector />
+              
+              {/* Income Input Section */}
+              <div 
+                className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border
+                }}
+              >
+                <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>💰 SET INCOME</h3>
+                <div className="space-y-3">
                   <input
                     type="number"
-                    value={currentLimit || ''}
-                    onChange={(e) => setCategoryLimit(cat.id, parseFloat(e.target.value) || 0)}
-                    placeholder="No limit"
-                    className="w-32 bg-gray-900 border-2 border-gray-700 p-2 text-white text-sm font-bold focus:border-white outline-none"
+                    value={getIncome()}
+                    onChange={(e) => setIncome(parseFloat(e.target.value) || 0)}
+                    placeholder="Enter your income"
+                    className="w-full border-4 p-3 font-bold outline-none"
+                    style={{
+                      backgroundColor: theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
                   />
+                  <button
+                    onClick={toggleIncomeRecurring}
+                    className="w-full border-4 p-3 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                    style={{
+                      backgroundColor: getIncomeRecurring() ? theme.colors.success : theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  >
+                    {getIncomeRecurring() ? <Repeat size={20} /> : <X size={20} />}
+                    {getIncomeRecurring() ? 'RECURRING INCOME ✓' : 'MARK AS RECURRING'}
+                  </button>
+                  {getIncomeRecurring() && (
+                    <p className="text-xs" style={{ color: theme.colors.success }}>💚 This income will auto-copy to new months</p>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-          {notificationsEnabled ? (
-            <p className="text-xs text-green-400 mt-4">
-              ✅ Notifications enabled! You'll be alerted when you exceed limits.
-            </p>
-          ) : (
-            <p className="text-xs text-yellow-400 mt-4">
-              💡 Enable notifications (🔔 button above) to get browser alerts!
-            </p>
+              </div>
+
+              {/* Add Expense Section */}
+              <div 
+                className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border
+                }}
+              >
+                <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>➕ ADD EXPENSE</h3>
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={newExpense.name}
+                    onChange={(e) => setNewExpense({ ...newExpense, name: e.target.value })}
+                    placeholder="Expense name"
+                    className="w-full border-4 p-3 font-bold outline-none"
+                    style={{
+                      backgroundColor: theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  />
+                  
+                  <input
+                    type="number"
+                    value={newExpense.amount}
+                    onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
+                    placeholder="Amount"
+                    className="w-full border-4 p-3 font-bold outline-none"
+                    style={{
+                      backgroundColor: theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  />
+                  
+                  <select
+                    value={newExpense.category}
+                    onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
+                    className="w-full border-4 p-3 font-bold outline-none"
+                    style={{
+                      backgroundColor: theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  >
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setNewExpense({ ...newExpense, isRecurring: !newExpense.isRecurring })}
+                    className="w-full border-4 p-3 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                    style={{
+                      backgroundColor: newExpense.isRecurring ? theme.colors.success : theme.colors.secondary,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  >
+                    {newExpense.isRecurring ? <Repeat size={20} /> : <X size={20} />}
+                    {newExpense.isRecurring ? 'RECURRING ✓' : 'ONE-TIME EXPENSE'}
+                  </button>
+                  
+                  <button
+                    onClick={handleAddExpense}
+                    className="w-full border-4 p-3 font-bold flex items-center justify-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+                    style={{
+                      backgroundColor: theme.colors.success,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text
+                    }}
+                  >
+                    <Plus size={20} />
+                    ADD EXPENSE
+                  </button>
+                </div>
+              </div>
+
+              {/* Category Budget Limits */}
+              <div 
+                className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border
+                }}
+              >
+                <div className="flex items-center gap-2 mb-4">
+                  <AlertTriangle size={24} style={{ color: theme.colors.warning }} />
+                  <h3 className="text-xl font-bold" style={{ color: theme.colors.text }}>⚠️ SET SPENDING LIMITS</h3>
+                </div>
+                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>
+                  Set budget limits for each category. You'll get alerts at 80% and 100%.
+                </p>
+                <div className="space-y-3">
+                  {categories.map(cat => {
+                    const currentLimit = getCategoryLimits()[cat.id] || 0;
+                    return (
+                      <div key={cat.id} className="flex items-center gap-3">
+                        <div
+                          className="w-4 h-4 border-2 border-black flex-shrink-0"
+                          style={{ backgroundColor: cat.color }}
+                        />
+                        <span className="text-sm flex-1" style={{ color: theme.colors.text }}>{cat.name}</span>
+                        <input
+                          type="number"
+                          value={currentLimit || ''}
+                          onChange={(e) => setCategoryLimit(cat.id, parseFloat(e.target.value) || 0)}
+                          placeholder="No limit"
+                          className="w-32 border-2 p-2 text-sm font-bold outline-none"
+                          style={{
+                            backgroundColor: theme.colors.secondary,
+                            borderColor: theme.colors.border,
+                            color: theme.colors.text
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                {notificationsEnabled ? (
+                  <p className="text-xs mt-4" style={{ color: theme.colors.success }}>
+                    ✅ Notifications enabled! You'll be alerted when you exceed limits.
+                  </p>
+                ) : (
+                  <p className="text-xs mt-4" style={{ color: theme.colors.warning }}>
+                    💡 Enable notifications (🔔 button above) to get browser alerts!
+                  </p>
+                )}
+              </div>
+
+              {/* Export Data Section */}
+              <div 
+                className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border
+                }}
+              >
+                <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>📥 EXPORT DATA</h3>
+                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Download your budget data as a CSV file for Excel or Google Sheets.</p>
+                <button
+                  onClick={() => {
+                    playClickSound();
+                    handleExportCSV();
+                  }}
+                  className="w-full border-4 p-3 font-bold flex items-center justify-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+                  style={{
+                    backgroundColor: theme.colors.accent,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text
+                  }}
+                >
+                  <Download size={20} />
+                  DOWNLOAD CSV
+                </button>
+              </div>
+
+              {/* Reset Data Section */}
+              <div 
+                className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border
+                }}
+              >
+                <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>⚠️ DANGER ZONE</h3>
+                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Reset all data and start fresh. This action cannot be undone!</p>
+                <button
+                  onClick={() => {
+                    playWarningSound();
+                    handleResetData();
+                  }}
+                  className="w-full border-4 p-3 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+                  style={{
+                    backgroundColor: theme.colors.error,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text
+                  }}
+                >
+                  🗑️ RESET ALL DATA
+                </button>
+              </div>
+            </div>
           )}
-        </div>
 
-        {/* Export Data Section */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h3 className="text-xl font-bold mb-4">📥 EXPORT DATA</h3>
-          <p className="text-gray-400 text-sm mb-4">Download your budget data as a CSV file for Excel or Google Sheets.</p>
-          <button
-            onClick={() => {
-              playClickSound();
-              handleExportCSV();
-            }}
-            className="w-full bg-purple-600 hover:bg-purple-700 border-4 border-purple-800 p-3 font-bold flex items-center justify-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
-          >
-            <Download size={20} />
-            DOWNLOAD CSV
-          </button>
-        </div>
-
-        {/* Reset Data Section */}
-        <div className="bg-gray-800 border-4 border-gray-900 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h3 className="text-xl font-bold mb-4">⚠️ DANGER ZONE</h3>
-          <p className="text-gray-400 text-sm mb-4">Reset all data and start fresh. This action cannot be undone!</p>
-          <button
-            onClick={() => {
-              playWarningSound();
-              handleResetData();
-            }}
-            className="w-full bg-red-600 hover:bg-red-700 border-4 border-red-800 p-3 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
-          >
-            🗑️ RESET ALL DATA
-          </button>
-        </div></div>
-        )}
-
-        {/* Footer */}
-        <div className="text-center mt-8 text-gray-500 text-sm">
-          <p>💾 DATA AUTO-SAVED • PRESS START TO CONTINUE YOUR FINANCIAL JOURNEY 🚀</p>
+          {/* Footer */}
+          <div className="text-center mt-8 text-sm" style={{ color: theme.colors.textSecondary }}>
+            <p>💾 DATA AUTO-SAVED • PRESS START TO CONTINUE YOUR FINANCIAL JOURNEY 🚀</p>
+          </div>
         </div>
       </div>
     </div>
-    </>
   );
 }
-// New wrapper component that handles auth
+
+// Wrapper component that handles auth
 function AppWithAuth() {
   const { user } = useAuth();
 
-  // If not logged in, show login screen
   if (!user) {
     return <Login />;
   }
 
-  // If logged in, show main app
   return <MainApp />;
 }
 
-// Main export with AuthProvider
+// Main export with both providers
 export default function App() {
   return (
     <AuthProvider>
-      <AppWithAuth />
+      <ThemeProvider>
+        <AppWithAuth />
+      </ThemeProvider>
     </AuthProvider>
   );
 }
