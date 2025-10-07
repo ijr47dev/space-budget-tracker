@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Rocket, Trash2, Plus, DollarSign, TrendingDown, TrendingUp, Edit2, Save, X, Download, Volume2, VolumeX, PieChart as PieChartIcon, ChevronLeft, ChevronRight, Calendar, Repeat, Bell, BellOff, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Rocket, Trash2, Plus, DollarSign, TrendingDown, TrendingUp, Edit2, Save, X, Download, Volume2, VolumeX, PieChart as PieChartIcon, ChevronLeft, ChevronRight, Calendar, Repeat, Bell, BellOff, AlertTriangle, Palette } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { AuthProvider, useAuth } from './AuthContext';
 import Login from './Login';
 import { saveMonthlyBudgets, loadMonthlyBudgets, migrateLocalStorageToFirestore } from './firestoreService';
 import Insights from './Insights';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
-import ThemeSelector from './components/ThemeSelector';
+import BillsDueAlert from './components/BillsDueAlert';
+import CalendarView from './components/CalendarView';
+import ThemeModal from './components/ThemeModal';
 
 /**
- * Renders the animated starfield background
- * Defined outside main component to prevent recreation on every render
+ * StarField Component - Animated background stars
  */
 const StarField = () => {
   return (
@@ -34,14 +35,13 @@ const StarField = () => {
 };
 
 /**
- * Main Budget Calculator Component
- * A retro NES/space themed budget tracking application with Firestore persistence
+ * MainApp Component - Main budget tracking application
  */
 function MainApp() {
   const { user, logout } = useAuth();
-  const { theme } = useTheme(); // Theme hook for dynamic colors
+  const { theme } = useTheme();
 
-  // State Management
+  // ===== STATE MANAGEMENT =====
   const [monthlyBudgets, setMonthlyBudgets] = useState({});
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -51,7 +51,9 @@ function MainApp() {
     name: '',
     amount: '',
     category: 'food',
-    isRecurring: false
+    isRecurring: false,
+    dueDate: '',
+    paid: false
   });
   const [screen, setScreen] = useState('main');
   const [isLoaded, setIsLoaded] = useState(false);
@@ -60,11 +62,106 @@ function MainApp() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [alertsShown, setAlertsShown] = useState({});
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
   
-  const populatedMonthsRef = useRef({});
+
+  // ===== MONTH DATA GETTERS (MEMOIZED) =====
+  
+  /**
+   * Get current month's budget data
+   */
+  const getCurrentMonthData = useCallback(() => {
+    return monthlyBudgets[currentMonth] || { 
+      income: 0, 
+      incomeRecurring: false, 
+      expenses: [], 
+      categoryLimits: {} 
+    };
+  }, [monthlyBudgets, currentMonth]);
+
+  const getIncome = useCallback(() => getCurrentMonthData().income, [getCurrentMonthData]);
+  const getIncomeRecurring = useCallback(() => getCurrentMonthData().incomeRecurring || false, [getCurrentMonthData]);
+  const getExpenses = useCallback(() => getCurrentMonthData().expenses || [], [getCurrentMonthData]);
+  const getCategoryLimits = useCallback(() => getCurrentMonthData().categoryLimits || {}, [getCurrentMonthData]);
+
+  // ===== DATE HELPER FUNCTIONS =====
+  
+  /**
+   * Format date string for display
+   */
+  const formatDate = (dateString) => {
+    if (!dateString) return 'No due date';
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
 
   /**
-   * Requests browser notification permission
+   * Check if bill is due soon (within 3 days)
+   */
+  const isDueSoon = (dateString) => {
+    if (!dateString) return false;
+    const [year, month, day] = dateString.split('-').map(Number);
+    const dueDate = new Date(year, month - 1, day);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    dueDate.setHours(0, 0, 0, 0);
+    const threeDaysFromNow = new Date(today.getTime() + (3 * 24 * 60 * 60 * 1000));
+    return dueDate >= today && dueDate <= threeDaysFromNow;
+  };
+
+  /**
+   * Check if bill is overdue
+   */
+  const isOverdue = (dateString) => {
+    if (!dateString) return false;
+    const [year, month, day] = dateString.split('-').map(Number);
+    const dueDate = new Date(year, month - 1, day);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    dueDate.setHours(0, 0, 0, 0);
+    return dueDate < today;
+  };
+
+  /**
+   * Get bills due this week (excluding paid bills)
+   */
+  const getBillsDueThisWeek = useCallback(() => {
+    const expenses = getExpenses();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const oneWeekFromNow = new Date(today.getTime() + (7 * 24 * 60 * 60 * 1000));
+    
+    return expenses.filter(expense => {
+      if (!expense.dueDate || expense.paid) return false;
+      const [year, month, day] = expense.dueDate.split('-').map(Number);
+      const dueDate = new Date(year, month - 1, day);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate >= today && dueDate <= oneWeekFromNow;
+    }).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  }, [getExpenses]);
+
+  /**
+   * Get overdue bills (excluding paid bills)
+   */
+  const getOverdueBills = useCallback(() => {
+    const expenses = getExpenses();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    return expenses.filter(expense => {
+      if (!expense.dueDate || expense.paid) return false;
+      const [year, month, day] = expense.dueDate.split('-').map(Number);
+      const dueDate = new Date(year, month - 1, day);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate < today;
+    }).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  }, [getExpenses]);
+
+  // ===== NOTIFICATION HANDLERS =====
+  
+  /**
+   * Request browser notification permission
    */
   const requestNotificationPermission = async () => {
     if ('Notification' in window) {
@@ -75,7 +172,7 @@ function MainApp() {
   };
 
   /**
-   * Toggles notification permission
+   * Toggle notification setting
    */
   const toggleNotifications = () => {
     if (notificationsEnabled) {
@@ -86,20 +183,10 @@ function MainApp() {
     }
   };
 
+  // ===== BUDGET DATA SETTERS =====
+  
   /**
-   * Gets the budget data for the current month
-   */
-  const getCurrentMonthData = () => {
-    return monthlyBudgets[currentMonth] || { income: 0, incomeRecurring: false, expenses: [], categoryLimits: {} };
-  };
-
-  const getIncome = () => getCurrentMonthData().income;
-  const getIncomeRecurring = () => getCurrentMonthData().incomeRecurring || false;
-  const getExpenses = () => getCurrentMonthData().expenses || [];
-  const getCategoryLimits = () => getCurrentMonthData().categoryLimits || {};
-
-  /**
-   * Sets a budget limit for a specific category
+   * Set category spending limit
    */
   const setCategoryLimit = (categoryId, limit) => {
     const currentLimits = getCategoryLimits();
@@ -121,7 +208,7 @@ function MainApp() {
   };
 
   /**
-   * Updates income for the current month
+   * Set monthly income
    */
   const setIncome = (value, isRecurring) => {
     setMonthlyBudgets(prev => ({
@@ -135,7 +222,7 @@ function MainApp() {
   };
 
   /**
-   * Toggles whether income is recurring
+   * Toggle income recurring status
    */
   const toggleIncomeRecurring = () => {
     const current = getIncomeRecurring();
@@ -144,7 +231,7 @@ function MainApp() {
   };
 
   /**
-   * Updates expenses for the current month
+   * Set expenses for current month
    */
   const setExpenses = (newExpenses) => {
     setMonthlyBudgets(prev => ({
@@ -156,8 +243,10 @@ function MainApp() {
     }));
   };
 
+  // ===== FIRESTORE DATA PERSISTENCE =====
+  
   /**
-   * Load data from Firestore when component first mounts
+   * Load user data from Firestore on mount
    */
   useEffect(() => {
     const loadUserData = async () => {
@@ -182,7 +271,7 @@ function MainApp() {
   }, [user]);
 
   /**
-   * Save monthly budgets to Firestore whenever they change
+   * Save to Firestore when data changes
    */
   useEffect(() => {
     const saveUserData = async () => {
@@ -198,11 +287,14 @@ function MainApp() {
     saveUserData();
   }, [monthlyBudgets, isLoaded, user]);
 
+  // ===== AUTO-POPULATE RECURRING ITEMS =====
+  
   /**
-   * Auto-populate recurring items when changing months
+   * Auto-populate recurring items when switching months
+   * Updates existing items with wrong due dates and adds missing items
    */
   useEffect(() => {
-    if (!isLoaded || !currentMonth || populatedMonthsRef.current[currentMonth]) {
+    if (!isLoaded || !currentMonth) {
       return;
     }
     
@@ -211,77 +303,155 @@ function MainApp() {
       const previousMonth = sortedMonths.find(m => m < currentMonth);
       
       if (!previousMonth) {
-        populatedMonthsRef.current[currentMonth] = true;
         return;
       }
       
       const prevData = monthlyBudgets[previousMonth];
       if (!prevData) {
-        populatedMonthsRef.current[currentMonth] = true;
         return;
       }
       
-      const currentData = monthlyBudgets[currentMonth];
-      const hasExpenses = currentData && currentData.expenses && currentData.expenses.length > 0;
-      const hasIncome = currentData && currentData.income > 0;
-      
-      if (hasExpenses || hasIncome) {
-        populatedMonthsRef.current[currentMonth] = true;
-        return;
-      }
-      
-      const newMonthData = {
-        income: 0,
-        incomeRecurring: false,
-        expenses: [],
-        categoryLimits: {}
+      const currentData = monthlyBudgets[currentMonth] || { 
+        income: 0, 
+        incomeRecurring: false, 
+        expenses: [], 
+        categoryLimits: {} 
       };
       
-      let hasRecurringData = false;
+      const recurringFromPrev = (prevData.expenses || []).filter(exp => exp && exp.isRecurring);
       
-      if (prevData.incomeRecurring && prevData.income > 0) {
-        newMonthData.income = prevData.income;
-        newMonthData.incomeRecurring = true;
-        hasRecurringData = true;
+      if (recurringFromPrev.length === 0) {
+        return;
       }
       
-      if (prevData.expenses && Array.isArray(prevData.expenses) && prevData.expenses.length > 0) {
-        const recurringExpenses = prevData.expenses
-          .filter(exp => exp && exp.isRecurring)
-          .map((exp, index) => ({
-            ...exp,
-            id: Date.now() + index
-          }));
-        
-        if (recurringExpenses.length > 0) {
-          newMonthData.expenses = recurringExpenses;
-          hasRecurringData = true;
+      // Create a map of existing expenses by normalized name
+      const existingExpensesMap = new Map();
+      (currentData.expenses || []).forEach(exp => {
+        if (exp && exp.isRecurring) {
+          existingExpensesMap.set(exp.name.trim().toLowerCase(), exp);
         }
-      }
+      });
       
-      if (prevData.categoryLimits && typeof prevData.categoryLimits === 'object') {
-        newMonthData.categoryLimits = { ...prevData.categoryLimits };
-      }
+      const itemsToAdd = [];
+      const itemsToUpdate = [];
       
-      if (hasRecurringData) {
-        setMonthlyBudgets(prev => ({
-          ...prev,
-          [currentMonth]: newMonthData
-        }));
+      // Check each recurring item from previous month
+      recurringFromPrev.forEach(prevExp => {
+        const normalizedName = prevExp.name.trim().toLowerCase();
+        const existingExp = existingExpensesMap.get(normalizedName);
         
+        // Calculate adjusted due date for current month
+        let adjustedDueDate = prevExp.dueDate;
+        if (prevExp.dueDate) {
+          const oldDay = parseInt(prevExp.dueDate.split('-')[2], 10);
+          const [newYear, newMonth] = currentMonth.split('-').map(Number);
+          const lastDayOfNewMonth = new Date(newYear, newMonth, 0).getDate();
+          const dayToUse = Math.min(oldDay, lastDayOfNewMonth);
+          adjustedDueDate = `${newYear}-${String(newMonth).padStart(2, '0')}-${String(dayToUse).padStart(2, '0')}`;
+        }
+        
+        if (existingExp) {
+          // Item exists - check if due date needs updating
+          if (existingExp.dueDate !== adjustedDueDate) {
+            itemsToUpdate.push({
+              ...existingExp,
+              dueDate: adjustedDueDate,
+              paid: false // Reset paid status for new month
+            });
+          }
+        } else {
+          // Item doesn't exist - add it
+          itemsToAdd.push({
+            ...prevExp,
+            id: Date.now() + Math.random() * 1000,
+            dueDate: adjustedDueDate,
+            paid: false // New recurring items start unpaid
+          });
+        }
+      });
+      
+      if (itemsToAdd.length === 0 && itemsToUpdate.length === 0 && 
+          !(prevData.incomeRecurring && prevData.income > 0 && currentData.income === 0)) {
+        return;
+      }
+      
+      // Build updated expenses list
+      const updatedExpenses = (currentData.expenses || []).map(exp => {
+        if (!exp || !exp.isRecurring) return exp;
+        
+        // Check if this expense needs updating
+        const updateItem = itemsToUpdate.find(u => u.id === exp.id);
+        return updateItem || exp;
+      });
+      
+      // Add new items
+      updatedExpenses.push(...itemsToAdd);
+      
+      // Update income if needed
+      let updatedIncome = currentData.income;
+      let updatedIncomeRecurring = currentData.incomeRecurring;
+      
+      if (prevData.incomeRecurring && prevData.income > 0 && currentData.income === 0) {
+        updatedIncome = prevData.income;
+        updatedIncomeRecurring = true;
+      }
+      
+      // Copy category limits
+      const updatedLimits = {
+        ...(prevData.categoryLimits || {}),
+        ...(currentData.categoryLimits || {})
+      };
+      
+      // Update the month data
+      setMonthlyBudgets(prev => ({
+        ...prev,
+        [currentMonth]: {
+          income: updatedIncome,
+          incomeRecurring: updatedIncomeRecurring,
+          expenses: updatedExpenses,
+          categoryLimits: updatedLimits
+        }
+      }));
+      
+      if (itemsToAdd.length > 0 || itemsToUpdate.length > 0) {
         if (soundEnabled) {
           setTimeout(() => playSuccessSound(), 100);
         }
       }
-      
-      populatedMonthsRef.current[currentMonth] = true;
     }, 100);
     
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentMonth, isLoaded]);
+  }, [currentMonth, isLoaded, monthlyBudgets]);
 
-  // Available expense categories with associated colors
+  /**
+   * Check for bills on load and send notifications
+   */
+  useEffect(() => {
+    if (!notificationsEnabled || !isLoaded) return;
+    
+    const sessionKey = `bills-checked-${currentMonth}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    
+    const billsDue = getBillsDueThisWeek();
+    const overdue = getOverdueBills();
+    
+    if (overdue.length > 0) {
+      new Notification('🚨 Overdue Bills!', {
+        body: `You have ${overdue.length} overdue bill(s). Check your dashboard.`,
+        icon: '🚀'
+      });
+    } else if (billsDue.length > 0) {
+      new Notification('📅 Bills Due This Week', {
+        body: `You have ${billsDue.length} bill(s) due this week.`,
+        icon: '🚀'
+      });
+    }
+    
+    sessionStorage.setItem(sessionKey, 'true');
+  }, [notificationsEnabled, isLoaded, currentMonth, getBillsDueThisWeek, getOverdueBills]);
+
+  // ===== CATEGORY DEFINITIONS =====
   const categories = [
     { id: 'food', name: '🍕 Food', color: '#ff6b9d' },
     { id: 'housing', name: '🏠 Housing', color: '#00e5ff' },
@@ -295,8 +465,10 @@ function MainApp() {
     { id: 'other', name: '📦 Other', color: '#c084fc' }
   ];
 
+  // ===== SOUND EFFECTS (WEB AUDIO API) =====
+  
   /**
-   * Sound Effect Generators using Web Audio API
+   * Play click sound effect
    */
   const playClickSound = () => {
     if (!soundEnabled) return;
@@ -317,6 +489,9 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.1);
   };
 
+  /**
+   * Play success sound effect
+   */
   const playSuccessSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -338,6 +513,9 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.3);
   };
 
+  /**
+   * Play warning sound effect
+   */
   const playWarningSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -358,6 +536,9 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.3);
   };
 
+  /**
+   * Play delete sound effect
+   */
   const playDeleteSound = () => {
     if (!soundEnabled) return;
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -378,18 +559,26 @@ function MainApp() {
     oscillator.stop(audioContext.currentTime + 0.2);
   };
 
+  // ===== CALCULATION FUNCTIONS =====
+  
   /**
-   * Calculation functions
+   * Calculate total expenses for current month
    */
   const calculateTotalExpenses = () => {
     const expenses = getExpenses();
     return expenses.reduce((total, expense) => total + parseFloat(expense.amount), 0);
   };
 
+  /**
+   * Calculate remaining budget
+   */
   const calculateRemaining = () => {
     return getIncome() - calculateTotalExpenses();
   };
 
+  /**
+   * Calculate category totals with limit information
+   */
   const calculateCategoryTotals = () => {
     const totals = {};
     const expenses = getExpenses();
@@ -422,7 +611,7 @@ function MainApp() {
   };
 
   /**
-   * Checks if any category limits have been exceeded
+   * Check category limits and send notifications
    */
   const checkCategoryLimits = () => {
     if (!notificationsEnabled) return;
@@ -449,8 +638,10 @@ function MainApp() {
     });
   };
 
+  // ===== EXPENSE HANDLERS =====
+  
   /**
-   * Expense management functions
+   * Add new expense
    */
   const handleAddExpense = () => {
     if (newExpense.name && newExpense.amount) {
@@ -464,7 +655,9 @@ function MainApp() {
           name: newExpense.name,
           amount: parseFloat(newExpense.amount),
           category: newExpense.category,
-          isRecurring: newExpense.isRecurring
+          isRecurring: newExpense.isRecurring,
+          dueDate: newExpense.dueDate || null,
+          paid: false
         }
       ]);
       
@@ -475,17 +668,23 @@ function MainApp() {
         playSuccessSound();
       }
       
-      setNewExpense({ name: '', amount: '', category: 'food', isRecurring: false });
+      setNewExpense({ name: '', amount: '', category: 'food', isRecurring: false, dueDate: '', paid: false });
       setTimeout(() => checkCategoryLimits(), 100);
     }
   };
 
+  /**
+   * Delete expense
+   */
   const handleDeleteExpense = (id) => {
     const expenses = getExpenses();
     setExpenses(expenses.filter(expense => expense.id !== id));
     playDeleteSound();
   };
 
+  /**
+   * Toggle expense recurring status
+   */
   const toggleExpenseRecurring = (id) => {
     const expenses = getExpenses();
     setExpenses(expenses.map(expense => 
@@ -496,11 +695,30 @@ function MainApp() {
     playClickSound();
   };
 
+  /**
+   * Toggle expense paid status
+   */
+  const toggleExpensePaid = (id) => {
+    const expenses = getExpenses();
+    setExpenses(expenses.map(expense => 
+      expense.id === id 
+        ? { ...expense, paid: !expense.paid }
+        : expense
+    ));
+    playClickSound();
+  };
+
+  /**
+   * Start editing expense
+   */
   const handleStartEdit = (expense) => {
     setEditingExpenseId(expense.id);
     setEditingExpenseData({ ...expense });
   };
 
+  /**
+   * Save edited expense
+   */
   const handleSaveEdit = () => {
     if (editingExpenseData.name && editingExpenseData.amount) {
       const expenses = getExpenses();
@@ -515,33 +733,35 @@ function MainApp() {
     }
   };
 
+  /**
+   * Cancel editing
+   */
   const handleCancelEdit = () => {
     setEditingExpenseId(null);
     setEditingExpenseData(null);
   };
 
   /**
-   * Exports budget data to CSV file
+   * Export budget data to CSV
    */
   const handleExportCSV = () => {
     const income = getIncome();
     const expenses = getExpenses();
     
     let csvContent = `Budget Report - ${formatMonthYear(currentMonth)}\n\n`;
-    csvContent += "Category,Name,Amount\n";
-    
-    csvContent += `Income,Monthly Income,${income}\n`;
+    csvContent += "Category,Name,Amount,Due Date,Paid\n";
+    csvContent += `Income,Monthly Income,${income},,\n`;
     
     expenses.forEach(expense => {
       const category = categories.find(c => c.id === expense.category);
       const name = expense.name.includes(',') ? `"${expense.name}"` : expense.name;
-      csvContent += `${category.name},${name},${expense.amount}\n`;
+      csvContent += `${category.name},${name},${expense.amount},${expense.dueDate || ''},${expense.paid ? 'Yes' : 'No'}\n`;
     });
     
     csvContent += `\nSummary\n`;
-    csvContent += `Total Income,,${income}\n`;
-    csvContent += `Total Expenses,,${calculateTotalExpenses()}\n`;
-    csvContent += `Remaining,,${calculateRemaining()}\n`;
+    csvContent += `Total Income,,${income},,\n`;
+    csvContent += `Total Expenses,,${calculateTotalExpenses()},,\n`;
+    csvContent += `Remaining,,${calculateRemaining()},,\n`;
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -558,7 +778,7 @@ function MainApp() {
   };
 
   /**
-   * Month navigation
+   * Navigate to previous month
    */
   const handlePreviousMonth = () => {
     const [year, month] = currentMonth.split('-').map(Number);
@@ -568,6 +788,9 @@ function MainApp() {
     playClickSound();
   };
 
+  /**
+   * Navigate to next month
+   */
   const handleNextMonth = () => {
     const [year, month] = currentMonth.split('-').map(Number);
     const nextDate = new Date(year, month);
@@ -576,6 +799,9 @@ function MainApp() {
     playClickSound();
   };
 
+  /**
+   * Format month string for display
+   */
   const formatMonthYear = (monthStr) => {
     const [year, month] = monthStr.split('-');
     const date = new Date(year, month - 1);
@@ -583,7 +809,7 @@ function MainApp() {
   };
 
   /**
-   * Gets historical data for month comparison chart
+   * Get monthly history for charts
    */
   const getMonthlyHistory = () => {
     const months = Object.keys(monthlyBudgets).sort();
@@ -595,6 +821,9 @@ function MainApp() {
     })).slice(-6);
   };
 
+  /**
+   * Reset all data
+   */
   const handleResetData = async () => {
     if (window.confirm('🚀 Are you sure you want to reset all data? This cannot be undone!')) {
       try {
@@ -610,6 +839,9 @@ function MainApp() {
     }
   };
 
+  /**
+   * Format currency
+   */
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -617,7 +849,7 @@ function MainApp() {
     }).format(amount);
   };
 
-  // Main Render
+  // ===== MAIN RENDER =====
   return (
     <div>
       <style>{`
@@ -643,8 +875,9 @@ function MainApp() {
         <StarField />
         
         <div className="max-w-4xl mx-auto relative z-10">
-          {/* Control Buttons - Top Right */}
+          {/* ===== TOP CONTROL BUTTONS ===== */}
           <div className="fixed top-4 right-4 flex gap-2 z-50">
+            {/* User Info & Logout */}
             <div 
               className="border-2 px-3 py-2 flex items-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
               style={{
@@ -668,6 +901,7 @@ function MainApp() {
               </button>
             </div>
             
+            {/* Notification Toggle */}
             <button
               onClick={toggleNotifications}
               className="border-2 p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
@@ -680,7 +914,25 @@ function MainApp() {
             >
               {notificationsEnabled ? <Bell size={20} /> : <BellOff size={20} />}
             </button>
+
+            {/* Theme Toggle */}
+            <button
+              onClick={() => {
+                playClickSound();
+                setIsThemeModalOpen(true);
+              }}
+              className="border-2 p-2 transition-all hover:scale-110 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.5)]"
+              style={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+                color: theme.colors.text
+              }}
+              title="Change theme"
+            >
+              <Palette size={20} />
+            </button>
             
+            {/* Sound Toggle */}
             <button
               onClick={() => {
                 setSoundEnabled(!soundEnabled);
@@ -700,7 +952,7 @@ function MainApp() {
             </button>
           </div>
           
-          {/* Header */}
+          {/* ===== HEADER ===== */}
           <div className="text-center mb-8 mt-8">
             <div 
               className="inline-block border-4 p-6 shadow-[8px_8px_0px_0px_rgba(255,255,255,0.3)]"
@@ -718,7 +970,7 @@ function MainApp() {
             </div>
           </div>
 
-          {/* Month Navigation */}
+          {/* ===== MONTH NAVIGATION ===== */}
           <div 
             className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mb-6"
             style={{
@@ -735,7 +987,6 @@ function MainApp() {
                   borderColor: theme.colors.border,
                   color: theme.colors.text
                 }}
-                title="Previous month"
               >
                 <ChevronLeft size={24} />
               </button>
@@ -753,14 +1004,13 @@ function MainApp() {
                   borderColor: theme.colors.border,
                   color: theme.colors.text
                 }}
-                title="Next month"
               >
                 <ChevronRight size={24} />
               </button>
             </div>
           </div>
 
-          {/* Navigation Buttons */}
+          {/* ===== SCREEN NAVIGATION BUTTONS ===== */}
           <div className="flex gap-4 mb-6">
             <button
               onClick={() => {
@@ -806,11 +1056,12 @@ function MainApp() {
             </button>
           </div>
 
-          {/* Dashboard Screen */}
+          {/* ===== DASHBOARD SCREEN ===== */}
           {screen === 'main' && (
-            <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">
-              {/* Budget Overview Section */}
+            <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]" style={{ overflow: 'visible' }}>
+              {/* Budget Overview Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Income Card */}
                 <div 
                   className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105"
                   style={{
@@ -822,11 +1073,12 @@ function MainApp() {
                   <div className="flex items-center gap-2 mb-2">
                     <TrendingUp size={20} />
                     <span className="text-sm font-bold">INCOME</span>
-                    {getIncomeRecurring() && <Repeat size={16} className="animate-pulse" title="Recurring" />}
+                    {getIncomeRecurring() && <Repeat size={16} className="animate-pulse" />}
                   </div>
                   <div className="text-2xl font-bold">{formatCurrency(getIncome())}</div>
                 </div>
 
+                {/* Expenses Card */}
                 <div 
                   className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105"
                   style={{
@@ -842,6 +1094,7 @@ function MainApp() {
                   <div className="text-2xl font-bold">{formatCurrency(calculateTotalExpenses())}</div>
                 </div>
 
+                {/* Remaining Card */}
                 <div 
                   className={`border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 ${calculateRemaining() < 0 ? 'animate-pulse' : ''}`}
                   style={{
@@ -861,7 +1114,15 @@ function MainApp() {
                 </div>
               </div>
 
-              {/* Budget Alerts */}
+              {/* Bills Due Alert Banner */}
+              <BillsDueAlert 
+                billsDueThisWeek={getBillsDueThisWeek()}
+                overdueBills={getOverdueBills()}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+              />
+
+              {/* Category Budget Alerts */}
               {(() => {
                 const overLimitCategories = calculateCategoryTotals().filter(cat => cat.isOverLimit);
                 const nearLimitCategories = calculateCategoryTotals().filter(cat => cat.isNearLimit);
@@ -925,7 +1186,7 @@ function MainApp() {
                 return null;
               })()}
 
-              {/* Monthly Comparison Chart */}
+              {/* Monthly Trends Chart */}
               {Object.keys(monthlyBudgets).length > 1 && (
                 <div 
                   className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
@@ -938,33 +1199,18 @@ function MainApp() {
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={getMonthlyHistory()}>
                       <CartesianGrid strokeDasharray="3 3" stroke={theme.colors.border} />
-                      <XAxis 
-                        dataKey="month" 
-                        stroke={theme.colors.text}
-                        style={{ fontFamily: 'monospace', fontSize: '12px' }}
-                      />
-                      <YAxis 
-                        stroke={theme.colors.text}
-                        style={{ fontFamily: 'monospace', fontSize: '12px' }}
-                        tickFormatter={(value) => `${value}`}
-                      />
+                      <XAxis dataKey="month" stroke={theme.colors.text} style={{ fontFamily: 'monospace', fontSize: '12px' }} />
+                      <YAxis stroke={theme.colors.text} style={{ fontFamily: 'monospace', fontSize: '12px' }} />
                       <Tooltip 
                         contentStyle={{ 
                           backgroundColor: theme.colors.surface,
                           border: `2px solid ${theme.colors.border}`,
-                          borderRadius: '0',
                           color: theme.colors.text,
                           fontFamily: 'monospace'
                         }}
                         formatter={(value) => formatCurrency(value)}
                       />
-                      <Legend 
-                        wrapperStyle={{ 
-                          fontFamily: 'monospace',
-                          fontSize: '12px',
-                          color: theme.colors.text
-                        }}
-                      />
+                      <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '12px' }} />
                       <Bar dataKey="income" fill={theme.colors.success} stroke="#000" strokeWidth={2} name="Income" />
                       <Bar dataKey="expenses" fill={theme.colors.error} stroke="#000" strokeWidth={2} name="Expenses" />
                       <Bar dataKey="remaining" fill={theme.colors.accent} stroke="#000" strokeWidth={2} name="Remaining" />
@@ -973,7 +1219,7 @@ function MainApp() {
                 </div>
               )}
 
-              {/* Pie Chart Visualization */}
+              {/* Pie Chart */}
               {getExpenses().length > 0 && (
                 <div 
                   className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
@@ -997,8 +1243,6 @@ function MainApp() {
                         outerRadius={100}
                         fill="#8884d8"
                         dataKey="total"
-                        animationDuration={800}
-                        animationBegin={0}
                       >
                         {calculateCategoryTotals().map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} stroke="#000" strokeWidth={2} />
@@ -1008,24 +1252,28 @@ function MainApp() {
                         contentStyle={{ 
                           backgroundColor: theme.colors.surface,
                           border: `2px solid ${theme.colors.border}`,
-                          borderRadius: '0',
                           color: theme.colors.text,
                           fontFamily: 'monospace'
                         }}
                         formatter={(value) => formatCurrency(value)}
                       />
-                      <Legend 
-                        wrapperStyle={{ 
-                          fontFamily: 'monospace',
-                          fontSize: '12px'
-                        }}
-                      />
+                      <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '12px' }} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
               )}
 
-              {/* Category Breakdown */}
+              {/* Bills Calendar */}
+            <div style={{overflow: 'visible', position: 'relative'}}>
+              <CalendarView 
+                expenses={getExpenses()}
+                formatCurrency={formatCurrency}
+                categories={categories}
+                currentMonth={currentMonth}
+              />
+            </div>
+
+              {/* Category Details */}
               {getExpenses().length > 0 && (
                 <div 
                   className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
@@ -1039,11 +1287,8 @@ function MainApp() {
                     {calculateCategoryTotals().map(cat => {
                       let barColor = cat.color;
                       if (cat.limit > 0) {
-                        if (cat.isOverLimit) {
-                          barColor = theme.colors.error;
-                        } else if (cat.isNearLimit) {
-                          barColor = theme.colors.warning;
-                        }
+                        if (cat.isOverLimit) barColor = theme.colors.error;
+                        else if (cat.isNearLimit) barColor = theme.colors.warning;
                       }
                       
                       return (
@@ -1085,7 +1330,6 @@ function MainApp() {
                                   backgroundColor: theme.colors.text,
                                   boxShadow: `0 0 4px ${theme.colors.text}`
                                 }}
-                                title={`Limit: ${formatCurrency(cat.limit)}`}
                               />
                             )}
                           </div>
@@ -1122,12 +1366,12 @@ function MainApp() {
                           }}
                         >
                           {isEditing ? (
+                            /* Edit Mode */
                             <div className="space-y-3">
                               <input
                                 type="text"
                                 value={editingExpenseData.name}
                                 onChange={(e) => setEditingExpenseData({ ...editingExpenseData, name: e.target.value })}
-                                placeholder="Expense name"
                                 className="w-full border-2 p-2 font-bold outline-none"
                                 style={{
                                   backgroundColor: theme.colors.surface,
@@ -1139,7 +1383,6 @@ function MainApp() {
                                 type="number"
                                 value={editingExpenseData.amount}
                                 onChange={(e) => setEditingExpenseData({ ...editingExpenseData, amount: e.target.value })}
-                                placeholder="Amount"
                                 className="w-full border-2 p-2 font-bold outline-none"
                                 style={{
                                   backgroundColor: theme.colors.surface,
@@ -1162,6 +1405,23 @@ function MainApp() {
                                 ))}
                               </select>
                               
+                              <div>
+                                <label className="text-xs font-bold mb-1 block" style={{ color: theme.colors.text }}>
+                                  📅 Due Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={editingExpenseData.dueDate || ''}
+                                  onChange={(e) => setEditingExpenseData({ ...editingExpenseData, dueDate: e.target.value })}
+                                  className="w-full border-2 p-2 font-bold outline-none"
+                                  style={{
+                                    backgroundColor: theme.colors.surface,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                />
+                              </div>
+                              
                               <button
                                 type="button"
                                 onClick={() => setEditingExpenseData({ ...editingExpenseData, isRecurring: !editingExpenseData.isRecurring })}
@@ -1175,6 +1435,22 @@ function MainApp() {
                                 {editingExpenseData.isRecurring ? <Repeat size={16} /> : <X size={16} />}
                                 {editingExpenseData.isRecurring ? 'RECURRING ✓' : 'ONE-TIME'}
                               </button>
+
+                              {editingExpenseData.dueDate && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingExpenseData({ ...editingExpenseData, paid: !editingExpenseData.paid })}
+                                  className="w-full border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: editingExpenseData.paid ? theme.colors.success : theme.colors.secondary,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  {editingExpenseData.paid ? '✓' : '○'}
+                                  {editingExpenseData.paid ? 'PAID ✓' : 'MARK AS PAID'}
+                                </button>
+                              )}
                               
                               <div className="flex gap-2">
                                 <button
@@ -1207,24 +1483,56 @@ function MainApp() {
                               </div>
                             </div>
                           ) : (
+                            /* View Mode */
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 flex-1">
                                 <div
-                                  className="w-3 h-3 border-2 border-black"
+                                  className="w-3 h-3 border-2 border-black flex-shrink-0"
                                   style={{ backgroundColor: category.color }}
                                 />
-                                <div>
+                                <div className="flex-1">
                                   <div className="font-bold flex items-center gap-2" style={{ color: theme.colors.text }}>
                                     {expense.name}
                                     {expense.isRecurring && (
-                                      <Repeat size={14} style={{ color: theme.colors.success }} title="Recurring expense" />
+                                      <Repeat size={14} style={{ color: theme.colors.success }} />
+                                    )}
+                                    {expense.paid && (
+                                      <span className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: theme.colors.success, color: theme.colors.text }}>
+                                        PAID
+                                      </span>
                                     )}
                                   </div>
-                                  <div className="text-xs" style={{ color: theme.colors.textSecondary }}>{category.name}</div>
+                                  <div className="text-xs" style={{ color: theme.colors.textSecondary }}>
+                                    {category.name}
+                                    {expense.dueDate && (
+                                      <span className="ml-2">
+                                        • Due: {formatDate(expense.dueDate)}
+                                        {isOverdue(expense.dueDate) && !expense.paid && <span style={{ color: theme.colors.error }}> (OVERDUE)</span>}
+                                        {isDueSoon(expense.dueDate) && !isOverdue(expense.dueDate) && !expense.paid && <span style={{ color: theme.colors.warning }}> (Soon)</span>}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="font-bold" style={{ color: theme.colors.text }}>{formatCurrency(expense.amount)}</span>
+                                
+                                {expense.dueDate && (
+                                  <button
+                                    onClick={() => toggleExpensePaid(expense.id)}
+                                    className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                    style={{
+                                      backgroundColor: expense.paid ? theme.colors.success : theme.colors.secondary,
+                                      borderColor: theme.colors.border,
+                                      color: theme.colors.text,
+                                      opacity: expense.paid ? 0.7 : 1
+                                    }}
+                                    title={expense.paid ? "Mark as unpaid" : "Mark as paid"}
+                                  >
+                                    {expense.paid ? '✓' : '○'}
+                                  </button>
+                                )}
+                                
                                 <button
                                   onClick={() => {
                                     playClickSound();
@@ -1236,7 +1544,6 @@ function MainApp() {
                                     borderColor: theme.colors.border,
                                     color: theme.colors.text
                                   }}
-                                  title={expense.isRecurring ? "Remove recurring" : "Mark as recurring"}
                                 >
                                   {expense.isRecurring ? <Repeat size={16} /> : <X size={16} />}
                                 </button>
@@ -1251,7 +1558,6 @@ function MainApp() {
                                     borderColor: theme.colors.border,
                                     color: theme.colors.text
                                   }}
-                                  title="Edit expense"
                                 >
                                   <Edit2 size={16} />
                                 </button>
@@ -1263,7 +1569,6 @@ function MainApp() {
                                     borderColor: theme.colors.border,
                                     color: theme.colors.text
                                   }}
-                                  title="Delete expense"
                                 >
                                   <Trash2 size={16} />
                                 </button>
@@ -1289,17 +1594,12 @@ function MainApp() {
                   <Rocket size={48} className="mx-auto mb-4 animate-bounce" style={{ color: theme.colors.text }} />
                   <p className="text-xl font-bold mb-2" style={{ color: theme.colors.text }}>NO EXPENSES YET!</p>
                   <p className="mb-2" style={{ color: theme.colors.textSecondary }}>Add your income and start tracking expenses for {formatMonthYear(currentMonth)}</p>
-                  {Object.keys(monthlyBudgets).length > 0 && (
-                    <p className="text-xs mt-4" style={{ color: theme.colors.success }}>
-                      💡 Recurring items from previous months will auto-copy when you add new data!
-                    </p>
-                  )}
                 </div>
               )}
             </div>
           )}
 
-          {/* Insights Screen */}
+          {/* ===== INSIGHTS SCREEN ===== */}
           {screen === 'insights' && (
             <div className="animate-[fadeIn_0.3s_ease-in]">
               <Insights 
@@ -1311,12 +1611,10 @@ function MainApp() {
             </div>
           )}
 
-          {/* Settings Screen */}
+          {/* ===== SETTINGS/MANAGE SCREEN ===== */}
           {screen === 'settings' && (
             <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]">
-              <ThemeSelector />
-              
-              {/* Income Input Section */}
+              {/* Income Input */}
               <div 
                 className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{
@@ -1330,7 +1628,6 @@ function MainApp() {
                     type="number"
                     value={getIncome()}
                     onChange={(e) => setIncome(parseFloat(e.target.value) || 0)}
-                    placeholder="Enter your income"
                     className="w-full border-4 p-3 font-bold outline-none"
                     style={{
                       backgroundColor: theme.colors.secondary,
@@ -1350,13 +1647,10 @@ function MainApp() {
                     {getIncomeRecurring() ? <Repeat size={20} /> : <X size={20} />}
                     {getIncomeRecurring() ? 'RECURRING INCOME ✓' : 'MARK AS RECURRING'}
                   </button>
-                  {getIncomeRecurring() && (
-                    <p className="text-xs" style={{ color: theme.colors.success }}>💚 This income will auto-copy to new months</p>
-                  )}
                 </div>
               </div>
 
-              {/* Add Expense Section */}
+              {/* Add Expense */}
               <div 
                 className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{
@@ -1406,6 +1700,26 @@ function MainApp() {
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>
+
+                  <div>
+                    <label className="text-sm font-bold mb-2 block" style={{ color: theme.colors.text }}>
+                      📅 Due Date (Optional)
+                    </label>
+                    <input
+                      type="date"
+                      value={newExpense.dueDate}
+                      onChange={(e) => setNewExpense({ ...newExpense, dueDate: e.target.value })}
+                      className="w-full border-4 p-3 font-bold outline-none"
+                      style={{
+                        backgroundColor: theme.colors.secondary,
+                        borderColor: theme.colors.border,
+                        color: theme.colors.text
+                      }}
+                    />
+                    <p className="text-xs mt-1" style={{ color: theme.colors.textSecondary }}>
+                      💡 Set a due date to get reminders for bills
+                    </p>
+                  </div>
                   
                   <button
                     type="button"
@@ -1436,7 +1750,252 @@ function MainApp() {
                 </div>
               </div>
 
-              {/* Category Budget Limits */}
+              {/* Manage Expenses */}
+              {getExpenses().length > 0 && (
+                <div 
+                  className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                  style={{
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border
+                  }}
+                >
+                  <h3 className="text-xl font-bold mb-2" style={{ color: theme.colors.text }}>✏️ MANAGE EXPENSES</h3>
+                  <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>
+                    Edit, delete, or mark your expenses as paid for {formatMonthYear(currentMonth)}
+                  </p>
+                  
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {getExpenses().map(expense => {
+                      const category = categories.find(c => c.id === expense.category);
+                      const isEditing = editingExpenseId === expense.id;
+                      
+                      return (
+                        <div
+                          key={expense.id}
+                          className="border-2 p-3 transition-colors"
+                          style={{
+                            backgroundColor: theme.colors.secondary,
+                            borderColor: isEditing ? theme.colors.accent : theme.colors.border
+                          }}
+                        >
+                          {isEditing ? (
+                            /* Edit Mode */
+                            <div className="space-y-3">
+                              <input
+                                type="text"
+                                value={editingExpenseData.name}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, name: e.target.value })}
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              />
+                              <input
+                                type="number"
+                                value={editingExpenseData.amount}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, amount: e.target.value })}
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              />
+                              <select
+                                value={editingExpenseData.category}
+                                onChange={(e) => setEditingExpenseData({ ...editingExpenseData, category: e.target.value })}
+                                className="w-full border-2 p-2 font-bold outline-none"
+                                style={{
+                                  backgroundColor: theme.colors.surface,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              >
+                                {categories.map(cat => (
+                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                ))}
+                              </select>
+                              
+                              <div>
+                                <label className="text-xs font-bold mb-1 block" style={{ color: theme.colors.text }}>
+                                  📅 Due Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={editingExpenseData.dueDate || ''}
+                                  onChange={(e) => setEditingExpenseData({ ...editingExpenseData, dueDate: e.target.value })}
+                                  className="w-full border-2 p-2 font-bold outline-none"
+                                  style={{
+                                    backgroundColor: theme.colors.surface,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                />
+                              </div>
+                              
+                              <button
+                                type="button"
+                                onClick={() => setEditingExpenseData({ ...editingExpenseData, isRecurring: !editingExpenseData.isRecurring })}
+                                className="w-full border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                style={{
+                                  backgroundColor: editingExpenseData.isRecurring ? theme.colors.success : theme.colors.secondary,
+                                  borderColor: theme.colors.border,
+                                  color: theme.colors.text
+                                }}
+                              >
+                                {editingExpenseData.isRecurring ? <Repeat size={16} /> : <X size={16} />}
+                                {editingExpenseData.isRecurring ? 'RECURRING ✓' : 'ONE-TIME'}
+                              </button>
+
+                              {editingExpenseData.dueDate && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingExpenseData({ ...editingExpenseData, paid: !editingExpenseData.paid })}
+                                  className="w-full border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: editingExpenseData.paid ? theme.colors.success : theme.colors.secondary,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  {editingExpenseData.paid ? '✓' : '○'}
+                                  {editingExpenseData.paid ? 'PAID ✓' : 'MARK AS PAID'}
+                                </button>
+                              )}
+                              
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleSaveEdit}
+                                  className="flex-1 border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.success,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <Save size={16} />
+                                  SAVE
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    playClickSound();
+                                    handleCancelEdit();
+                                  }}
+                                  className="flex-1 border-2 p-2 font-bold flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.secondary,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <X size={16} />
+                                  CANCEL
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* View Mode */
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div
+                                  className="w-3 h-3 border-2 border-black flex-shrink-0"
+                                  style={{ backgroundColor: category.color }}
+                                />
+                                <div className="flex-1">
+                                  <div className="font-bold flex items-center gap-2" style={{ color: theme.colors.text }}>
+                                    {expense.name}
+                                    {expense.isRecurring && (
+                                      <Repeat size={14} style={{ color: theme.colors.success }} />
+                                    )}
+                                    {expense.paid && (
+                                      <span className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: theme.colors.success, color: theme.colors.text }}>
+                                        PAID
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs" style={{ color: theme.colors.textSecondary }}>
+                                    {category.name}
+                                    {expense.dueDate && (
+                                      <span className="ml-2">
+                                        • Due: {formatDate(expense.dueDate)}
+                                        {isOverdue(expense.dueDate) && !expense.paid && <span style={{ color: theme.colors.error }}> (OVERDUE)</span>}
+                                        {isDueSoon(expense.dueDate) && !isOverdue(expense.dueDate) && !expense.paid && <span style={{ color: theme.colors.warning }}> (Soon)</span>}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-lg mr-2" style={{ color: theme.colors.text }}>
+                                  {formatCurrency(expense.amount)}
+                                </span>
+                                
+                                {expense.dueDate && (
+                                  <button
+                                    onClick={() => toggleExpensePaid(expense.id)}
+                                    className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                    style={{
+                                      backgroundColor: expense.paid ? theme.colors.success : theme.colors.secondary,
+                                      borderColor: theme.colors.border,
+                                      color: theme.colors.text,
+                                      opacity: expense.paid ? 0.7 : 1
+                                    }}
+                                    title={expense.paid ? "Mark as unpaid" : "Mark as paid"}
+                                  >
+                                    {expense.paid ? '✓' : '○'}
+                                  </button>
+                                )}
+                                
+                                <button
+                                  onClick={() => {
+                                    playClickSound();
+                                    handleStartEdit(expense);
+                                  }}
+                                  className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.accent,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteExpense(expense.id)}
+                                  className="border-2 p-2 transition-all hover:scale-110 active:scale-95"
+                                  style={{
+                                    backgroundColor: theme.colors.error,
+                                    borderColor: theme.colors.border,
+                                    color: theme.colors.text
+                                  }}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div 
+                    className="mt-4 pt-4 border-t-2 flex justify-between items-center"
+                    style={{ borderColor: theme.colors.border }}
+                  >
+                    <span className="font-bold" style={{ color: theme.colors.text }}>
+                      Total Expenses: {getExpenses().length}
+                    </span>
+                    <span className="font-bold text-lg" style={{ color: theme.colors.text }}>
+                      {formatCurrency(calculateTotalExpenses())}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Category Limits */}
               <div 
                 className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{
@@ -1477,18 +2036,9 @@ function MainApp() {
                     );
                   })}
                 </div>
-                {notificationsEnabled ? (
-                  <p className="text-xs mt-4" style={{ color: theme.colors.success }}>
-                    ✅ Notifications enabled! You'll be alerted when you exceed limits.
-                  </p>
-                ) : (
-                  <p className="text-xs mt-4" style={{ color: theme.colors.warning }}>
-                    💡 Enable notifications (🔔 button above) to get browser alerts!
-                  </p>
-                )}
               </div>
 
-              {/* Export Data Section */}
+              {/* Export Data */}
               <div 
                 className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{
@@ -1497,7 +2047,7 @@ function MainApp() {
                 }}
               >
                 <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>📥 EXPORT DATA</h3>
-                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Download your budget data as a CSV file for Excel or Google Sheets.</p>
+                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Download your budget data as a CSV file.</p>
                 <button
                   onClick={() => {
                     playClickSound();
@@ -1515,7 +2065,7 @@ function MainApp() {
                 </button>
               </div>
 
-              {/* Reset Data Section */}
+              {/* Reset Data */}
               <div 
                 className="border-4 p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{
@@ -1524,7 +2074,7 @@ function MainApp() {
                 }}
               >
                 <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text }}>⚠️ DANGER ZONE</h3>
-                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Reset all data and start fresh. This action cannot be undone!</p>
+                <p className="text-sm mb-4" style={{ color: theme.colors.textSecondary }}>Reset all data and start fresh. This cannot be undone!</p>
                 <button
                   onClick={() => {
                     playWarningSound();
@@ -1549,22 +2099,31 @@ function MainApp() {
           </div>
         </div>
       </div>
+      
+      {/* Theme Modal */}
+      <ThemeModal 
+        isOpen={isThemeModalOpen}
+        onClose={() => {
+          playClickSound();
+          setIsThemeModalOpen(false);
+        }}
+      />
     </div>
   );
 }
 
-// Wrapper component that handles auth
+/**
+ * AppWithAuth Wrapper - Shows login or main app based on auth state
+ */
 function AppWithAuth() {
   const { user } = useAuth();
-
-  if (!user) {
-    return <Login />;
-  }
-
+  if (!user) return <Login />;
   return <MainApp />;
 }
 
-// Main export with both providers
+/**
+ * Main App Export - Wraps with providers
+ */
 export default function App() {
   return (
     <AuthProvider>
