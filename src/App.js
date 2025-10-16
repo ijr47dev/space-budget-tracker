@@ -10,6 +10,7 @@ import BillsDueAlert from './components/BillsDueAlert';
 import CalendarView from './components/CalendarView';
 import ThemeModal from './components/ThemeModal';
 import SavingsGoals from './components/SavingsGoals';
+import LoadingSpinner from './components/LoadingSpinner';
 
 /**
  * StarField Component - Animated background stars
@@ -264,6 +265,11 @@ const [viewMode, setViewMode] = useState('dashboard');
         }
 
          if (data && data.savingsGoals) {
+          setSavingsGoals(data.savingsGoals);
+        }
+
+        // Load savings goals
+        if (data && data.savingsGoals) {
           setSavingsGoals(data.savingsGoals);
         }
         
@@ -735,35 +741,12 @@ const [viewMode, setViewMode] = useState('dashboard');
   /**
    * Allocate funds to a goal
    */
-  const handleAllocateFunds = (goalId) => {
-    const surplus = calculateRemaining();
-    if (surplus <= 0) {
-      alert('No surplus available to allocate!');
-      playWarningSound();
-      return;
-    }
-
-    const amount = prompt(`How much would you like to allocate? (Available: ${formatCurrency(surplus)})`);
-    if (!amount) return;
-
-    const allocateAmount = parseFloat(amount);
-    if (isNaN(allocateAmount) || allocateAmount <= 0) {
-      alert('Please enter a valid amount!');
-      playWarningSound();
-      return;
-    }
-
-    if (allocateAmount > surplus) {
-      alert('Cannot allocate more than available surplus!');
-      playWarningSound();
-      return;
-    }
-
+  const handleAllocateFunds = (goalId, amount) => {
     setSavingsGoals(savingsGoals.map(goal => {
       if (goal.id === goalId) {
         return {
           ...goal,
-          currentAmount: goal.currentAmount + allocateAmount
+          currentAmount: goal.currentAmount + amount
         };
       }
       return goal;
@@ -951,6 +934,23 @@ const [viewMode, setViewMode] = useState('dashboard');
     }).format(amount);
   };
 
+  // Show loading screen while data loads
+  if (!isLoaded) {
+    return (
+      <div 
+        className="min-h-screen p-4 font-mono flex items-center justify-center"
+        style={{
+          background: `linear-gradient(to bottom, ${theme.colors.primary}, ${theme.colors.secondary})`,
+          color: theme.colors.text
+        }}
+      >
+        <div className="max-w-md w-full">
+          <LoadingSpinner message="Loading your budget... 🚀" />
+        </div>
+      </div>
+    );
+  }
+
   // ===== MAIN RENDER =====
   return (
     <div>
@@ -964,6 +964,85 @@ const [viewMode, setViewMode] = useState('dashboard');
             opacity: 1;
             transform: translateY(0);
           }
+        }
+        
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        
+        @keyframes popIn {
+          0% {
+            opacity: 0;
+            transform: scale(0.8);
+          }
+          50% {
+            transform: scale(1.05);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        
+        @keyframes celebrate {
+          0%, 100% {
+            transform: scale(1) rotate(0deg);
+          }
+          25% {
+            transform: scale(1.1) rotate(-5deg);
+          }
+          75% {
+            transform: scale(1.1) rotate(5deg);
+          }
+        }
+        
+        @keyframes shimmer {
+          0% {
+            background-position: -1000px 0;
+          }
+          100% {
+            background-position: 1000px 0;
+          }
+        }
+        
+        @keyframes fillProgress {
+          from {
+            width: 0;
+          }
+        }
+        
+        .animate-slideIn {
+          animation: slideIn 0.3s ease-out;
+        }
+        
+        .animate-popIn {
+          animation: popIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+        
+        .animate-celebrate {
+          animation: celebrate 0.6s ease-in-out;
+        }
+        
+        .animate-fillProgress {
+          animation: fillProgress 1s ease-out;
+        }
+        
+        .loading-shimmer {
+          background: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.2) 50%,
+            rgba(255, 255, 255, 0) 100%
+          );
+          background-size: 1000px 100%;
+          animation: shimmer 2s infinite;
         }
       `}</style>
       
@@ -1112,14 +1191,14 @@ const [viewMode, setViewMode] = useState('dashboard');
             </div>
           </div>
 
-          {/* ===== SCREEN NAVIGATION BUTTONS ===== */}
-          <div className="flex gap-4 mb-6">
+          {/* ===== SCREEN NAVIGATION BUTTONS - Mobile Optimized ===== */}
+          <div className="flex flex-col sm:flex-row gap-2 md:gap-4 mb-4 md:mb-6">
             <button
               onClick={() => {
                 playClickSound();
                 setScreen('main');
               }}
-              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              className="flex-1 border-4 p-3 md:p-4 text-sm md:text-base font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all active:scale-95 hover:scale-105"
               style={{
                 backgroundColor: screen === 'main' ? theme.colors.accent : theme.colors.secondary,
                 borderColor: theme.colors.border,
@@ -1133,7 +1212,7 @@ const [viewMode, setViewMode] = useState('dashboard');
                 playClickSound();
                 setScreen('insights');
               }}
-              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              className="flex-1 border-4 p-3 md:p-4 text-sm md:text-base font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all active:scale-95 hover:scale-105"
               style={{
                 backgroundColor: screen === 'insights' ? theme.colors.accent : theme.colors.secondary,
                 borderColor: theme.colors.border,
@@ -1147,7 +1226,7 @@ const [viewMode, setViewMode] = useState('dashboard');
                 playClickSound();
                 setScreen('settings');
               }}
-              className="flex-1 border-4 p-4 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105 active:scale-95"
+              className="flex-1 border-4 p-3 md:p-4 text-sm md:text-base font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all active:scale-95 hover:scale-105"
               style={{
                 backgroundColor: screen === 'settings' ? theme.colors.accent : theme.colors.secondary,
                 borderColor: theme.colors.border,
@@ -1158,15 +1237,15 @@ const [viewMode, setViewMode] = useState('dashboard');
             </button>
           </div>
 
-          {/* ADD VIEW MODE BUTTONS INSIDE DASHBOARD */}
+               {/* ADD VIEW MODE BUTTONS INSIDE DASHBOARD - Mobile Optimized */}
           {screen === 'main' && (
-            <div className="flex gap-2 mb-6 flex-wrap">
+            <div className="flex gap-2 mb-4 md:mb-6 flex-wrap">
               <button
                 onClick={() => {
                   playClickSound();
                   setViewMode('dashboard');
                 }}
-                className={`border-2 px-4 py-2 font-bold transition-all ${viewMode === 'dashboard' ? 'scale-105' : ''}`}
+                className={`flex-1 min-w-[100px] border-2 px-3 md:px-4 py-2 text-sm md:text-base font-bold transition-all active:scale-95 ${viewMode === 'dashboard' ? 'scale-105' : ''}`}
                 style={{
                   backgroundColor: viewMode === 'dashboard' ? theme.colors.accent : theme.colors.secondary,
                   borderColor: theme.colors.border,
@@ -1181,7 +1260,7 @@ const [viewMode, setViewMode] = useState('dashboard');
                   playClickSound();
                   setViewMode('calendar');
                 }}
-                className={`border-2 px-4 py-2 font-bold transition-all ${viewMode === 'calendar' ? 'scale-105' : ''}`}
+                className={`flex-1 min-w-[100px] border-2 px-3 md:px-4 py-2 text-sm md:text-base font-bold transition-all active:scale-95 ${viewMode === 'calendar' ? 'scale-105' : ''}`}
                 style={{
                   backgroundColor: viewMode === 'calendar' ? theme.colors.accent : theme.colors.secondary,
                   borderColor: theme.colors.border,
@@ -1196,7 +1275,7 @@ const [viewMode, setViewMode] = useState('dashboard');
                   playClickSound();
                   setViewMode('goals');
                 }}
-                className={`border-2 px-4 py-2 font-bold transition-all ${viewMode === 'goals' ? 'scale-105' : ''}`}
+                className={`flex-1 min-w-[100px] border-2 px-3 md:px-4 py-2 text-sm md:text-base font-bold transition-all active:scale-95 ${viewMode === 'goals' ? 'scale-105' : ''}`}
                 style={{
                   backgroundColor: viewMode === 'goals' ? theme.colors.accent : theme.colors.secondary,
                   borderColor: theme.colors.border,
@@ -1214,8 +1293,9 @@ const [viewMode, setViewMode] = useState('dashboard');
     {/* Dashboard Overview View */}
     {viewMode === 'dashboard' && (
       <div className="space-y-6 animate-[fadeIn_0.3s_ease-in]" style={{ overflow: 'visible' }}>
-        {/* Budget Overview Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Budget Overview Cards - Mobile Optimized */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+
           {/* Income Card */}
           <div 
             className="border-4 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all hover:scale-105"
